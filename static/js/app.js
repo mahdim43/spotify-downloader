@@ -101,14 +101,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function handleProgress(data) {
         if (data.total > 0) {
-            const pct = Math.round((data.completed / data.total) * 100);
+            const current = (data.current || 0) + 1;
+            const total = data.total;
+            const pct = Math.round(((current) / total) * 100);
             UI.setProgress(pct);
             UI.setPercent(`${pct}%`);
-            UI.setStatus(`Downloading ${data.completed}/${data.total}...`);
 
-            if (data.track) {
-                UI.setTrackInfo(data.track);
-            }
+            const trackName = data.track || 'Unknown Track';
+            UI.setStatus(`Downloading ${current}/${total}`);
+            UI.setTrackInfo(`${current}. ${trackName}`);
         }
 
         if (data.status === 'transcoding') {

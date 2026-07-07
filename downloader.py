@@ -293,14 +293,14 @@ async def _download_single(
         "-o", output_template,
         "--no-warnings",
         "--no-check-certificates",
-        "--match-filter", "duration<600 & !original_url*=/shorts/",
+        "--match-filter", "duration<600",
         "--no-update",
         "--extractor-args", "youtube:player_client=android_vr",
-        f"ytsearch1:{search_query} audio",
+        f"ytsearch:{search_query}",
     ]
 
     if on_progress:
-        on_progress(0, 1, f"Downloading: {clean_title}")
+        on_progress(0, 1, f"Downloading: {search_query}")
 
     result = await asyncio.to_thread(
         subprocess.run,
@@ -421,10 +421,10 @@ async def _download_playlist(
             "-o", output_template,
             "--no-warnings",
             "--no-check-certificates",
-            "--match-filter", "duration<600 & !original_url*=/shorts/",
+            "--match-filter", "duration<600",
             "--no-update",
             "--extractor-args", "youtube:player_client=android_vr",
-            f"ytsearch1:{search_query} audio",
+            f"ytsearch:{search_query}",
         ]
 
         try:
