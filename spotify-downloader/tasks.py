@@ -1,0 +1,148 @@
+import asyncio
+import json
+import logging
+import re
+import uuid
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+class Job:
+    def __init__(self, url: str, bitrate: str = "320", output_dir: str = ""):
+        self.id = str(uuid.uuid4())
+        self.url = url
+        self.bitrate = bitrate
+        self.output_dir = output_dir
+        self.status = "queued"
+        self.total = 0
+        self.completed = 0
+        self.failed = 0
+        self.files: list[str] = []
+        self.errors: list[str] = []
+        self.current_track = ""
+        self.subscribers: list[asyncio.Queue] = []
+
+    def to_dict(self) -> dict:
+        return {
+            "job_id": self.id,
+            "status": self.status,
+            "total": self.total,
+            "completed": self.completed,
+            "failed": self.failed,
+            "files": self.files,
+            "errors": self.errors,
+            "current_track": self.current_track,
+            "bitrate": self.bitrate,
+        }
+
+    def broadcast(self, event: str, data: dict):
+        payload = f"event: {event}\ndata: {json.dumps(data)}\n\n"
+        for q in self.subscribers:
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self.subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue):
+        if q in self.subscribers:
+            self.subscribers.remove(q)
+
+
+class TaskManager:
+    def __init__(self, download_dir: Path, max_concurrent: int = 5):
+        self.download_dir = download_dir
+        self.jobs: dict[str, Job] = {}
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self._cleanup_task: asyncio.Task | None = None
+
+    async def start_cleanup(self):
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
+
+    async def _cleanup_loop(self):
+        while True:
+            await asyncio.sleep(300)
+            to_remove = []
+            for job_id, job in self.jobs.items():
+                if job.status in ("completed", "failed"):
+                    to_remove.append(job_id)
+            for job_id in to_remove:
+                del self.jobs[job_id]
+
+    def get_job(self, job_id: str) -> Job | None:
+        return self.jobs.get(job_id)
+
+    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "") -> Job:
+        job = Job(url, bitrate, output_dir)
+        self.jobs[job.id] = job
+        return job
+
+    async def run_job(self, job: Job):
+        async with self.semaphore:
+            job.status = "processing"
+            job.broadcast("status", {"status": "processing"})
+
+            if job.output_dir:
+                output_dir = Path(job.output_dir)
+            else:
+                output_dir = self.download_dir
+
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                from downloader import download_spotify
+
+                files = await download_spotify(
+                    url=job.url,
+                    output_dir=output_dir,
+                    bitrate=job.bitrate,
+                    on_progress=lambda cur, total, track: self._on_progress(job, cur, total, track),
+                    on_file=lambda name: self._on_file(job, name),
+                    on_error=lambda msg: self._on_error(job, msg),
+                )
+
+                job.files = files
+                job.status = "completed"
+                job.broadcast("complete", {
+                    "status": "completed",
+                    "files": job.files,
+                    "total": job.total,
+                    "success": job.completed,
+                    "failed": job.failed,
+                })
+                logger.info(f"Job {job.id} completed: {job.completed} ok, {job.failed} failed")
+
+            except Exception as e:
+                logger.error(f"Job {job.id} failed: {e}", exc_info=True)
+                job.status = "failed"
+                job.errors.append(str(e))
+                job.broadcast("error", {"status": "failed", "error": str(e)})
+
+    def _on_progress(self, job: Job, current: int, total: int, track: str):
+        job.total = total
+        job.completed = current
+        job.current_track = track
+        job.broadcast("progress", {
+            "status": "downloading",
+            "current": current,
+            "total": total,
+            "track": track,
+        })
+
+    def _on_file(self, job: Job, name: str):
+        job.files.append(name)
+        job.broadcast("progress", {
+            "status": "downloading",
+            "current": job.completed,
+            "total": job.total,
+            "track": name,
+        })
+
+    def _on_error(self, job: Job, msg: str):
+        job.errors.append(msg)
+        job.failed += 1

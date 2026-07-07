@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPOTDOWN // Neon Edition</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="particles" id="particles"></div>
+    <div class="scan-line"></div>
+
+    <div class="container">
+        <header class="header">
+            <div class="logo-wrapper">
+                <h1 class="logo">
+                    <span class="logo-bracket">[</span>
+                    <span class="logo-text">SPOTDOWN</span>
+                    <span class="logo-bracket">]</span>
+                </h1>
+                <p class="tagline">NEON EDITION <span class="version">v1.0</span></p>
+            </div>
+        </header>
+
+        <main class="main">
+            <div class="glass-card input-card">
+                <div class="input-group">
+                    <label class="input-label">SPOTIFY_URL</label>
+                    <div class="url-input-wrapper">
+                        <input
+                            type="text"
+                            id="urlInput"
+                            class="url-input"
+                            placeholder="https://open.spotify.com/track/..."
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+                        <button id="goBtn" class="go-btn">
+                            <span class="go-text">EXEC</span>
+                            <span class="go-icon">&#9654;</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bitrate-group">
+                    <label class="input-label">BITRATE</label>
+                    <div class="bitrate-toggle">
+                        <button class="bitrate-btn" data-bitrate="192">192<small>kbps</small></button>
+                        <button class="bitrate-btn active" data-bitrate="320">320<small>kbps</small></button>
+                    </div>
+                </div>
+
+                <div class="download-dir-group">
+                    <label class="input-label">OUTPUT_DIR</label>
+                    <div class="dir-input-wrapper">
+                        <input
+                            type="text"
+                            id="downloadDir"
+                            class="dir-input"
+                            value=""
+                            placeholder="Default: ./downloads"
+                            readonly
+                        >
+                        <button id="browseBtn" class="browse-btn" title="Browse folder">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        </button>
+                        <button id="resetDirBtn" class="reset-dir-btn" title="Reset to default">&times;</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="progressSection" class="glass-card progress-card hidden">
+                <div class="progress-header">
+                    <span class="status-indicator" id="statusDot"></span>
+                    <span class="status-text" id="statusText">Initializing...</span>
+                </div>
+
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-glow"></div>
+                    </div>
+                </div>
+
+                <div class="progress-details">
+                    <span id="progressDetail"></span>
+                    <span id="progressPercent">0%</span>
+                </div>
+
+                <div class="track-info hidden" id="trackInfo">
+                    <span class="track-label">NOW:</span>
+                    <span class="track-name" id="trackName"></span>
+                </div>
+            </div>
+
+            <div id="filesSection" class="glass-card files-card hidden">
+                <h2 class="section-title">
+                    <span class="title-icon">&#9835;</span>
+                    DOWNLOADED FILES
+                </h2>
+                <div id="filesList" class="files-list"></div>
+            </div>
+
+            <div id="toastContainer" class="toast-container"></div>
+        </main>
+
+        <footer class="footer">
+            <span class="footer-text">SPOTDOWN // SELF-HOSTED // LOCAL PROCESSING</span>
+        </footer>
+    </div>
+
+    <script src="/static/js/api.js"></script>
+    <script src="/static/js/ui.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
