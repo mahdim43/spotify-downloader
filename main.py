@@ -162,7 +162,6 @@ async def api_health():
     return {
         "status": "ok",
         "ffmpeg_available": shutil.which(config.FFMPEG_PATH) is not None,
-        "spotdl_available": True,
         "ytdlp_available": shutil.which("yt-dlp") is not None,
         "download_dir": str(config.DOWNLOAD_DIR),
     }

@@ -1,8 +1,8 @@
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.31.0
 python-dotenv>=1.0.0
-spotdl>=4.2.0
 yt-dlp>=2023.0.0
 mutagen>=1.47.0
 pydantic>=2.0.0
 aiofiles>=23.0.0
+spotifyscraper>=3.9.2

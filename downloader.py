@@ -1,17 +1,15 @@
 import asyncio
-import base64
 import html
+import json
 import logging
 import re
 import subprocess
-import json
 from pathlib import Path
 from typing import Callable
 
 import requests
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, USLT, SYLT, ID3NoHeaderError
-
-import config
+from spotify_scraper import SpotifyClient
 
 logger = logging.getLogger(__name__)
 
@@ -20,28 +18,6 @@ SPOTIFY_URL_PATTERN = re.compile(
 )
 
 SPOTIFY_OEMBED_URL = "https://open.spotify.com/oembed"
-SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
-
-
-def _get_spotify_token() -> str | None:
-    """Get a Spotify API token using client credentials from .env."""
-    cid = config.SPOTIFY_CLIENT_ID
-    secret = config.SPOTIFY_CLIENT_SECRET
-    if not cid or not secret:
-        return None
-    try:
-        b64 = base64.b64encode(f"{cid}:{secret}".encode()).decode()
-        resp = requests.post(
-            SPOTIFY_TOKEN_URL,
-            data={"grant_type": "client_credentials"},
-            headers={"Authorization": f"Basic {b64}"},
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            return resp.json().get("access_token")
-    except Exception as e:
-        logger.warning(f"Failed to get Spotify token: {e}")
-    return None
 
 
 def is_spotify_url(url: str) -> bool:
@@ -649,6 +625,35 @@ async def _download_playlist(
     return {"files": downloaded_files, "failed": failed_tracks}
 
 
+def _extract_track_ids(html_text: str) -> list[str]:
+    """Extract unique Spotify track IDs from the raw HTML + initialState JSON."""
+    ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', html_text)
+    json_match = re.search(r'<script[^>]+id="initialState"[^>]*>(.*?)</script>', html_text, re.DOTALL)
+    if json_match:
+        raw = json_match.group(1).strip()
+        padding = 4 - len(raw) % 4
+        if padding != 4:
+            raw += '=' * padding
+        try:
+            data = json.loads(__import__("base64").b64decode(raw).decode('utf-8'))
+            json_str = json.dumps(data)
+            json_ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', json_str)
+            ids.extend(json_ids)
+        except Exception:
+            pass
+    return list(dict.fromkeys(ids))
+
+
+_spotify_client: SpotifyClient | None = None
+
+
+def _get_spotify_client() -> SpotifyClient:
+    global _spotify_client
+    if _spotify_client is None:
+        _spotify_client = SpotifyClient()
+    return _spotify_client
+
+
 async def _fetch_all_playlist_tracks(url: str) -> list[dict]:
     """Fetch ALL tracks from a Spotify playlist/album."""
     info = extract_spotify_id(url)
@@ -656,250 +661,35 @@ async def _fetch_all_playlist_tracks(url: str) -> list[dict]:
         return []
 
     content_type, content_id = info
-    tracks = []
+    client = _get_spotify_client()
 
-    if content_type == "album":
-        tracks = await _fetch_album_tracks(content_id)
-    elif content_type == "playlist":
-        tracks = await _fetch_playlist_tracks(content_id)
-
-    if not tracks:
-        tracks = await _fetch_tracks_from_ids(url)
-
-    return tracks
-
-
-async def _fetch_album_tracks(album_id: str) -> list[dict]:
-    """Fetch all tracks from a Spotify album."""
     try:
-        def fetch_page():
-            return requests.get(
-                f"https://open.spotify.com/album/{album_id}",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                timeout=15,
-            )
-
-        resp = await asyncio.to_thread(fetch_page)
-        if resp.status_code != 200:
-            return []
-
-        html_text = resp.text
-
-        token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
-        token = token_match.group(1) if token_match else _get_spotify_token()
-        if token:
-            def fetch_album():
-                return requests.get(
-                    f"https://api.spotify.com/v1/albums/{album_id}",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=15,
-                )
-
-            album_resp = await asyncio.to_thread(fetch_album)
-            cover_url = ""
-            if album_resp.status_code == 200:
-                album_data = album_resp.json()
-                if album_data.get("images"):
-                    cover_url = album_data["images"][0].get("url", "")
-
+        if content_type == "album":
+            album = await asyncio.to_thread(client.get_album, content_id)
             tracks = []
-            offset = 0
-            limit = 50
-            while True:
-                def fetch_api():
-                    return requests.get(
-                        f"https://api.spotify.com/v1/albums/{album_id}/tracks?limit={limit}&offset={offset}",
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=15,
-                    )
-
-                api_resp = await asyncio.to_thread(fetch_api)
-                if api_resp.status_code != 200:
-                    break
-                data = api_resp.json()
-                items = data.get("items", [])
-                for item in items:
-                    track_name = item.get("name", "")
-                    artists = [a.get("name", "") for a in item.get("artists", [])]
-                    artist_str = ", ".join(artists)
-                    tracks.append({
-                        "title": html.unescape(track_name),
-                        "artist": html.unescape(artist_str),
-                        "cover": _upgrade_cover_url(cover_url) if cover_url else "",
-                    })
-                if not data.get("next") or len(items) < limit:
-                    break
-                offset += limit
+            for t in album.tracks:
+                tracks.append({
+                    "title": html.unescape(t.name) if t.name else "",
+                    "artist": html.unescape(", ".join(a.name for a in t.artists)) if t.artists else "",
+                    "cover": _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else "",
+                })
+            logger.info(f"Found {len(tracks)} tracks in album")
             return tracks
-
-        track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', html_text)
-        track_ids = list(dict.fromkeys(track_ids))
-        if track_ids:
-            return await _fetch_tracks_by_ids(track_ids)
-
-        return []
-    except Exception as e:
-        logger.warning(f"Failed to fetch album tracks: {e}")
-        return []
-
-
-async def _fetch_playlist_tracks(playlist_id: str) -> list[dict]:
-    """Fetch all tracks from a Spotify playlist."""
-    try:
-        def fetch_page():
-            return requests.get(
-                f"https://open.spotify.com/playlist/{playlist_id}",
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                timeout=15,
-            )
-
-        resp = await asyncio.to_thread(fetch_page)
-        if resp.status_code != 200:
-            return []
-
-        html_text = resp.text
-
-        token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
-        token = token_match.group(1) if token_match else _get_spotify_token()
-        if token:
+        elif content_type == "playlist":
+            playlist = await asyncio.to_thread(client.get_playlist, content_id, max_tracks=None)
             tracks = []
-            offset = 0
-            limit = 50
-            while True:
-                def fetch_api():
-                    return requests.get(
-                        f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit={limit}&offset={offset}",
-                        headers={"Authorization": f"Bearer {token}"},
-                        timeout=15,
-                    )
-
-                api_resp = await asyncio.to_thread(fetch_api)
-                if api_resp.status_code != 200:
-                    break
-                data = api_resp.json()
-                items = data.get("items", [])
-                for item in items:
-                    track = item.get("track")
-                    if not track:
-                        continue
-                    track_name = track.get("name", "")
-                    artists = [a.get("name", "") for a in track.get("artists", [])]
-                    artist_str = ", ".join(artists)
-                    album_data = track.get("album", {})
-                    cover_url = ""
-                    if album_data.get("images"):
-                        cover_url = album_data["images"][0].get("url", "")
-                    tracks.append({
-                        "title": html.unescape(track_name),
-                        "artist": html.unescape(artist_str),
-                        "cover": _upgrade_cover_url(cover_url) if cover_url else "",
-                    })
-                if not data.get("next") or len(items) < limit:
-                    break
-                offset += limit
+            for pt in playlist.tracks:
+                t = pt.track
+                tracks.append({
+                    "title": html.unescape(t.name) if t.name else "",
+                    "artist": html.unescape(", ".join(a.name for a in t.artists)) if t.artists else "",
+                    "cover": _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else "",
+                })
+            logger.info(f"Found {len(tracks)} tracks in playlist (total: {playlist.total_tracks})")
             return tracks
-
-        track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', html_text)
-        track_ids = list(dict.fromkeys(track_ids))
-        if track_ids:
-            return await _fetch_tracks_by_ids(track_ids)
-
-        return []
     except Exception as e:
-        logger.warning(f"Failed to fetch playlist tracks: {e}")
-        return []
+        logger.warning(f"spotify_scraper failed for {content_type}/{content_id}: {e}")
+
+    return []
 
 
-async def _fetch_tracks_by_ids(track_ids: list[str]) -> list[dict]:
-    """Fetch metadata for tracks by their Spotify IDs using oEmbed + page scraping."""
-    sem = asyncio.Semaphore(10)
-
-    async def fetch_one(track_id: str) -> dict | None:
-        async with sem:
-            try:
-                track_url = f"https://open.spotify.com/track/{track_id}"
-
-                def do_oembed():
-                    return requests.get(
-                        "https://open.spotify.com/oembed",
-                        params={"url": track_url},
-                        timeout=10,
-                    )
-
-                oembed_resp = await asyncio.to_thread(do_oembed)
-                title = ""
-                thumbnail = ""
-                if oembed_resp.status_code == 200:
-                    data = oembed_resp.json()
-                    title = html.unescape(data.get("title", ""))
-                    thumbnail = data.get("thumbnail_url", "")
-
-                artist = ""
-                album = ""
-                og_image = ""
-
-                def do_page():
-                    return requests.get(
-                        track_url,
-                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                        timeout=10,
-                    )
-
-                page_resp = await asyncio.to_thread(do_page)
-                if page_resp.status_code == 200:
-                    page_html = page_resp.text
-                    og_desc = re.search(r'<meta property="og:description" content="([^"]+)"', page_html)
-                    if og_desc:
-                        desc = html.unescape(og_desc.group(1))
-                        parts = [p.strip() for p in desc.split("\u00B7")]
-                        if len(parts) >= 2:
-                            artist = parts[0]
-                        if len(parts) >= 3:
-                            album = parts[1]
-                    og_img_match = re.search(r'<meta property="og:image" content="([^"]+)"', page_html)
-                    if og_img_match:
-                        og_image = og_img_match.group(1)
-
-                cover_url = _upgrade_cover_url(og_image) if og_image else thumbnail
-
-                if title:
-                    return {
-                        "title": title,
-                        "artist": artist,
-                        "cover": cover_url,
-                    }
-            except Exception as e:
-                logger.warning(f"Failed to fetch metadata for {track_id}: {e}")
-            return None
-
-    tasks = [fetch_one(tid) for tid in track_ids]
-    results = await asyncio.gather(*tasks)
-    return [r for r in results if r]
-
-
-async def _fetch_tracks_from_ids(url: str) -> list[dict]:
-    """Extract track IDs from page HTML and fetch metadata for each."""
-    try:
-        def fetch_page():
-            return requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                timeout=15,
-            )
-
-        resp = await asyncio.to_thread(fetch_page)
-        if resp.status_code != 200:
-            return []
-
-        html_text = resp.text
-        track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', html_text)
-        track_ids = list(dict.fromkeys(track_ids))
-
-        if not track_ids:
-            return []
-
-        logger.info(f"Found {len(track_ids)} track IDs, fetching metadata...")
-        return await _fetch_tracks_by_ids(track_ids)
-    except Exception as e:
-        logger.warning(f"Failed to extract track IDs: {e}")
-        return []
