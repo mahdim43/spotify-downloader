@@ -279,6 +279,24 @@ def _sanitize_filename(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '_', name).strip('. ')
 
 
+def _clean_yt_filename(name: str) -> str:
+    """Strip YouTube suffixes like (Official Audio), (Audio), (Official Music Video), etc."""
+    cleaned = re.sub(r'\s*\(Official\s*Audio\)', '', name, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Official\s*Music\s*Video\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Audio\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Lyric\s*Video\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Lyrics\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Official\s*Lyric\s*Video\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Official\s*Audio\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Official\s*Music\s*Video\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Audio\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Lyric\s*Video\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Lyrics\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\(Visualizer\)', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[Visualizer\]', '', cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
 def _build_search_query(title: str, artist: str) -> str:
     """Build accurate YouTube search query from full title and artist, preferring audio-only."""
     parts = []
@@ -381,7 +399,7 @@ async def _download_single(
     if on_progress:
         on_progress(0, 1, f"Searching: {search_query}")
 
-    output_template = str(output_dir / "%(id)s.%(ext)s")
+    output_template = str(output_dir / "%(title)s.%(ext)s")
 
     args = [
         "yt-dlp",
@@ -419,54 +437,48 @@ async def _download_single(
     downloaded_files = []
     failed_tracks = []
 
-    safe_artist = _sanitize_filename(artist or "Unknown Artist")
-    safe_title = _sanitize_filename(clean_title or "Unknown Track")
-    spotify_name = f"{safe_artist} - {safe_title}.mp3"
-    spotify_path = output_dir / spotify_name
-
-    temp_file = None
     for f in output_dir.iterdir():
-        if f.suffix == ".mp3" and f.is_file():
-            temp_file = f
-            break
+        if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
+            new_name = _clean_yt_filename(f.stem) + f.suffix
+            if new_name != f.name:
+                new_path = f.parent / new_name
+                if not new_path.exists():
+                    f.rename(new_path)
+                    f = new_path
+                else:
+                    f.unlink()
+                    f = new_path
 
-    if temp_file and not spotify_path.exists():
-        temp_file.rename(spotify_path)
-    elif temp_file and spotify_path.exists():
-        temp_file.unlink()
+            downloaded_files.append(f.name)
 
-    if spotify_path.exists():
-        f = spotify_path
-        downloaded_files.append(f.name)
+            cover_data = None
+            thumb_url = ""
+            if page_info:
+                thumb_url = page_info.get("image", "")
+            if not thumb_url and metadata:
+                thumb_url = metadata.get("thumbnail", "")
 
-        cover_data = None
-        thumb_url = ""
-        if page_info:
-            thumb_url = page_info.get("image", "")
-        if not thumb_url and metadata:
-            thumb_url = metadata.get("thumbnail", "")
+            if thumb_url:
+                cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
 
-        if thumb_url:
-            cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
+            track_meta = {
+                "title": clean_title,
+                "artist": artist or "Unknown Artist",
+                "album": "",
+                "track_num": "",
+            }
+            if page_info:
+                if page_info.get("album"):
+                    track_meta["album"] = page_info["album"]
 
-        track_meta = {
-            "title": clean_title,
-            "artist": artist or "Unknown Artist",
-            "album": "",
-            "track_num": "",
-        }
-        if page_info:
-            if page_info.get("album"):
-                track_meta["album"] = page_info["album"]
+            lyrics = None
+            if embed_lyrics and artist and clean_title:
+                lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
 
-        lyrics = None
-        if embed_lyrics and artist and clean_title:
-            lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
+            await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
 
-        await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
-
-        if on_file:
-            on_file(f.name)
+            if on_file:
+                on_file(f.name)
 
     if on_progress:
         on_progress(1, 1, "Done")
@@ -533,12 +545,7 @@ async def _download_playlist(
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{search_query}")
 
-        safe_artist = _sanitize_filename(track_artist or "Unknown Artist")
-        safe_track = _sanitize_filename(track_name or "Unknown Track")
-        spotify_name = f"{safe_artist} - {safe_track}.mp3"
-        spotify_path = playlist_dir / spotify_name
-
-        output_template = str(playlist_dir / "%(id)s.%(ext)s")
+        output_template = str(playlist_dir / "%(title)s.%(ext)s")
 
         args = [
             "yt-dlp",
@@ -569,36 +576,36 @@ async def _download_playlist(
                 if track_cover:
                     track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
 
-                temp_file = None
                 for f in playlist_dir.iterdir():
                     if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-                        temp_file = f
+                        new_name = _clean_yt_filename(f.stem) + f.suffix
+                        if new_name != f.name:
+                            new_path = f.parent / new_name
+                            if not new_path.exists():
+                                f.rename(new_path)
+                                f = new_path
+                            else:
+                                f.unlink()
+                                f = new_path
+
+                        downloaded_files.append(f.name)
+
+                        track_meta = {
+                            "title": track_name,
+                            "artist": track_artist or "Unknown Artist",
+                            "album": album_title,
+                            "track_num": str(i),
+                        }
+
+                        lyrics = None
+                        if embed_lyrics and track_artist and track_name:
+                            lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
+
+                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
+
+                        if on_file:
+                            on_file(f.name)
                         break
-
-                if temp_file and not spotify_path.exists():
-                    temp_file.rename(spotify_path)
-                elif temp_file and spotify_path.exists():
-                    temp_file.unlink()
-
-                f = spotify_path
-                if f.exists():
-                    downloaded_files.append(f.name)
-
-                    track_meta = {
-                        "title": track_name,
-                        "artist": track_artist or "Unknown Artist",
-                        "album": album_title,
-                        "track_num": str(i),
-                    }
-
-                    lyrics = None
-                    if embed_lyrics and track_artist and track_name:
-                        lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
-
-                    await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
-
-                    if on_file:
-                        on_file(f.name)
             else:
                 logger.warning(f"Failed track {i}/{total}: {track_name}")
                 failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed"})
