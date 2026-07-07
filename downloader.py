@@ -48,15 +48,8 @@ def get_spotify_metadata(url: str) -> dict | None:
 
 
 def _upgrade_cover_url(url: str) -> str:
-    """Upgrade Spotify CDN URL to highest resolution (640x640)."""
-    if not url:
-        return url
-    url = re.sub(r'/[a-f0-9]{40}(/.*)?$', '', url)
-    if 'ab67616d00001e02' in url:
-        url = url.replace('ab67616d00001e02', 'ab67616d0000ba32')
-    elif 'ab67616d0000b273' not in url:
-        url = url + '/ab67616d0000ba32'
-    return url
+    """Return the cover URL as-is - Spotify CDN URLs are already optimal."""
+    return url if url else ""
 
 
 def get_spotify_track_info_from_url(url: str) -> dict | None:
@@ -300,10 +293,10 @@ async def _download_single(
         "-o", output_template,
         "--no-warnings",
         "--no-check-certificates",
-        "--match-filter", "duration<600",
+        "--match-filter", "duration<600 & !original_url*=/shorts/",
         "--no-update",
         "--extractor-args", "youtube:player_client=android_vr",
-        f"ytsearch:{search_query}",
+        f"ytsearch1:{search_query} audio",
     ]
 
     if on_progress:
@@ -380,6 +373,9 @@ async def _download_playlist(
     album_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', album_title).strip()
     album_title = re.sub(r'\s*-\s*Spotify.*', '', album_title).strip()
 
+    playlist_dir = output_dir / album_title if album_title else output_dir
+    playlist_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info(f"Fetching playlist tracks from: {url}")
 
     html_tracks = await _fetch_all_playlist_tracks(url)
@@ -393,15 +389,6 @@ async def _download_playlist(
         if on_error:
             on_error("No tracks found in playlist")
         return []
-
-    cover_data = None
-    thumb_url = ""
-    if page_info:
-        thumb_url = page_info.get("image", "")
-    if not thumb_url and metadata:
-        thumb_url = metadata.get("thumbnail", "")
-    if thumb_url:
-        cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
 
     downloaded_files = []
 
@@ -422,7 +409,7 @@ async def _download_playlist(
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{search_query}")
 
-        output_template = str(output_dir / "%(title)s.%(ext)s")
+        output_template = str(playlist_dir / "%(title)s.%(ext)s")
 
         args = [
             "yt-dlp",
@@ -434,10 +421,10 @@ async def _download_playlist(
             "-o", output_template,
             "--no-warnings",
             "--no-check-certificates",
-            "--match-filter", "duration<600",
+            "--match-filter", "duration<600 & !original_url*=/shorts/",
             "--no-update",
             "--extractor-args", "youtube:player_client=android_vr",
-            f"ytsearch:{search_query}",
+            f"ytsearch1:{search_query} audio",
         ]
 
         try:
@@ -449,11 +436,11 @@ async def _download_playlist(
             )
 
             if result.returncode == 0:
-                track_cover_data = cover_data
-                if track_cover and not track_cover_data:
+                track_cover_data = None
+                if track_cover:
                     track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
 
-                for f in output_dir.iterdir():
+                for f in playlist_dir.iterdir():
                     if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
                         downloaded_files.append(f.name)
 
@@ -652,31 +639,37 @@ async def _fetch_tracks_by_ids(track_ids: list[str]) -> list[dict]:
 
                 artist = ""
                 album = ""
-                if not artist or not album:
-                    def do_page():
-                        return requests.get(
-                            track_url,
-                            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
-                            timeout=10,
-                        )
+                og_image = ""
 
-                    page_resp = await asyncio.to_thread(do_page)
-                    if page_resp.status_code == 200:
-                        page_html = page_resp.text
-                        og_desc = re.search(r'<meta property="og:description" content="([^"]+)"', page_html)
-                        if og_desc:
-                            desc = html.unescape(og_desc.group(1))
-                            parts = [p.strip() for p in desc.split("\u00B7")]
-                            if len(parts) >= 2:
-                                artist = parts[0]
-                            if len(parts) >= 3:
-                                album = parts[1]
+                def do_page():
+                    return requests.get(
+                        track_url,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                        timeout=10,
+                    )
+
+                page_resp = await asyncio.to_thread(do_page)
+                if page_resp.status_code == 200:
+                    page_html = page_resp.text
+                    og_desc = re.search(r'<meta property="og:description" content="([^"]+)"', page_html)
+                    if og_desc:
+                        desc = html.unescape(og_desc.group(1))
+                        parts = [p.strip() for p in desc.split("\u00B7")]
+                        if len(parts) >= 2:
+                            artist = parts[0]
+                        if len(parts) >= 3:
+                            album = parts[1]
+                    og_img_match = re.search(r'<meta property="og:image" content="([^"]+)"', page_html)
+                    if og_img_match:
+                        og_image = og_img_match.group(1)
+
+                cover_url = _upgrade_cover_url(og_image) if og_image else thumbnail
 
                 if title:
                     return {
                         "title": title,
                         "artist": artist,
-                        "cover": _upgrade_cover_url(thumbnail) if thumbnail else "",
+                        "cover": cover_url,
                     }
             except Exception as e:
                 logger.warning(f"Failed to fetch metadata for {track_id}: {e}")
