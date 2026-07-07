@@ -274,6 +274,11 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics
         logger.warning(f"Failed to embed metadata: {e}")
 
 
+def _sanitize_filename(name: str) -> str:
+    """Remove characters unsafe for filenames on Windows."""
+    return re.sub(r'[<>:"/\\|?*]', '_', name).strip('. ')
+
+
 def _build_search_query(title: str, artist: str) -> str:
     """Build accurate YouTube search query from full title and artist, preferring audio-only."""
     parts = []
@@ -376,7 +381,7 @@ async def _download_single(
     if on_progress:
         on_progress(0, 1, f"Searching: {search_query}")
 
-    output_template = str(output_dir / "%(title)s.%(ext)s")
+    output_template = str(output_dir / "%(id)s.%(ext)s")
 
     args = [
         "yt-dlp",
@@ -413,38 +418,55 @@ async def _download_single(
 
     downloaded_files = []
     failed_tracks = []
+
+    safe_artist = _sanitize_filename(artist or "Unknown Artist")
+    safe_title = _sanitize_filename(clean_title or "Unknown Track")
+    spotify_name = f"{safe_artist} - {safe_title}.mp3"
+    spotify_path = output_dir / spotify_name
+
+    temp_file = None
     for f in output_dir.iterdir():
-        if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-            downloaded_files.append(f.name)
+        if f.suffix == ".mp3" and f.is_file():
+            temp_file = f
+            break
 
-            cover_data = None
-            thumb_url = ""
-            if page_info:
-                thumb_url = page_info.get("image", "")
-            if not thumb_url and metadata:
-                thumb_url = metadata.get("thumbnail", "")
+    if temp_file and not spotify_path.exists():
+        temp_file.rename(spotify_path)
+    elif temp_file and spotify_path.exists():
+        temp_file.unlink()
 
-            if thumb_url:
-                cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
+    if spotify_path.exists():
+        f = spotify_path
+        downloaded_files.append(f.name)
 
-            track_meta = {
-                "title": clean_title,
-                "artist": artist or "Unknown Artist",
-                "album": "",
-                "track_num": "",
-            }
-            if page_info:
-                if page_info.get("album"):
-                    track_meta["album"] = page_info["album"]
+        cover_data = None
+        thumb_url = ""
+        if page_info:
+            thumb_url = page_info.get("image", "")
+        if not thumb_url and metadata:
+            thumb_url = metadata.get("thumbnail", "")
 
-            lyrics = None
-            if embed_lyrics and artist and clean_title:
-                lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
+        if thumb_url:
+            cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
 
-            await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
+        track_meta = {
+            "title": clean_title,
+            "artist": artist or "Unknown Artist",
+            "album": "",
+            "track_num": "",
+        }
+        if page_info:
+            if page_info.get("album"):
+                track_meta["album"] = page_info["album"]
 
-            if on_file:
-                on_file(f.name)
+        lyrics = None
+        if embed_lyrics and artist and clean_title:
+            lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
+
+        await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
+
+        if on_file:
+            on_file(f.name)
 
     if on_progress:
         on_progress(1, 1, "Done")
@@ -511,7 +533,12 @@ async def _download_playlist(
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{search_query}")
 
-        output_template = str(playlist_dir / "%(title)s.%(ext)s")
+        safe_artist = _sanitize_filename(track_artist or "Unknown Artist")
+        safe_track = _sanitize_filename(track_name or "Unknown Track")
+        spotify_name = f"{safe_artist} - {safe_track}.mp3"
+        spotify_path = playlist_dir / spotify_name
+
+        output_template = str(playlist_dir / "%(id)s.%(ext)s")
 
         args = [
             "yt-dlp",
@@ -542,26 +569,36 @@ async def _download_playlist(
                 if track_cover:
                     track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
 
+                temp_file = None
                 for f in playlist_dir.iterdir():
                     if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-                        downloaded_files.append(f.name)
-
-                        track_meta = {
-                            "title": track_name,
-                            "artist": track_artist or "Unknown Artist",
-                            "album": album_title,
-                            "track_num": str(i),
-                        }
-
-                        lyrics = None
-                        if embed_lyrics and track_artist and track_name:
-                            lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
-
-                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
-
-                        if on_file:
-                            on_file(f.name)
+                        temp_file = f
                         break
+
+                if temp_file and not spotify_path.exists():
+                    temp_file.rename(spotify_path)
+                elif temp_file and spotify_path.exists():
+                    temp_file.unlink()
+
+                f = spotify_path
+                if f.exists():
+                    downloaded_files.append(f.name)
+
+                    track_meta = {
+                        "title": track_name,
+                        "artist": track_artist or "Unknown Artist",
+                        "album": album_title,
+                        "track_num": str(i),
+                    }
+
+                    lyrics = None
+                    if embed_lyrics and track_artist and track_name:
+                        lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
+
+                    await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
+
+                    if on_file:
+                        on_file(f.name)
             else:
                 logger.warning(f"Failed track {i}/{total}: {track_name}")
                 failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed"})
