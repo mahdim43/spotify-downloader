@@ -3,14 +3,12 @@ import html
 import logging
 import re
 import subprocess
-import io
 import json
 from pathlib import Path
 from typing import Callable
 
 import requests
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, ID3NoHeaderError
-from mutagen.mp3 import MP3
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +47,18 @@ def get_spotify_metadata(url: str) -> dict | None:
     return None
 
 
+def _upgrade_cover_url(url: str) -> str:
+    """Upgrade Spotify CDN URL to highest resolution (640x640)."""
+    if not url:
+        return url
+    url = re.sub(r'/[a-f0-9]{40}(/.*)?$', '', url)
+    if 'ab67616d00001e02' in url:
+        url = url.replace('ab67616d00001e02', 'ab67616d0000ba32')
+    elif 'ab67616d0000b273' not in url:
+        url = url + '/ab67616d0000ba32'
+    return url
+
+
 def get_spotify_track_info_from_url(url: str) -> dict | None:
     """Extract rich metadata by fetching the Spotify page and parsing meta tags."""
     try:
@@ -71,6 +81,9 @@ def get_spotify_track_info_from_url(url: str) -> dict | None:
         title = meta("og:title") or meta_name("title")
         description = meta("og:description") or meta_name("description")
         image = meta("og:image")
+
+        if image:
+            image = _upgrade_cover_url(image)
 
         artist = ""
         album = ""
@@ -177,6 +190,22 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
         logger.warning(f"Failed to embed metadata: {e}")
 
 
+def _build_search_query(title: str, artist: str) -> str:
+    """Build accurate YouTube search query from full title and artist."""
+    parts = []
+    if artist:
+        clean_artist = re.sub(r'\s*,\s*feat\.?.*', '', artist, flags=re.IGNORECASE).strip()
+        clean_artist = re.sub(r'\s*ft\.?.*', '', clean_artist, flags=re.IGNORECASE).strip()
+        parts.append(clean_artist)
+    if title:
+        clean_title = re.sub(r'\s*-\s*Spotify.*', '', title).strip()
+        clean_title = re.sub(r'\s*\(feat\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
+        clean_title = re.sub(r'\s*\(ft\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
+        parts.append(clean_title)
+
+    return " ".join(parts)
+
+
 def _parse_title_artist(raw_title: str) -> tuple[str, str]:
     """Parse 'Artist - Title' format, return (title, artist)."""
     raw_title = re.sub(r'\s*-\s*Spotify.*', '', raw_title).strip()
@@ -240,22 +269,24 @@ async def _download_single(
     if not raw_title:
         raw_title = "Unknown Track"
 
-    clean_title, parsed_artist = _parse_title_artist(raw_title)
-
     artist = ""
     if page_info:
         artist = page_info.get("artist", "")
+    if not artist and metadata:
+        desc = metadata.get("description", "")
+        desc_match = re.match(r'^(.+?)\s*·\s*', desc)
+        if desc_match:
+            artist = desc_match.group(1).strip()
+
+    clean_title, parsed_artist = _parse_title_artist(raw_title)
     if not artist:
         artist = parsed_artist
 
-    search_query = f"ytsearch:{clean_title} {artist}".strip() + " audio"
-    if not artist:
-        search_query = f"ytsearch:{clean_title} audio"
-
-    logger.info(f"Searching YouTube for: {search_query}")
+    search_query = _build_search_query(clean_title, artist)
+    logger.info(f"Searching YouTube for: ytsearch:{search_query}")
 
     if on_progress:
-        on_progress(0, 1, f"Searching: {clean_title}")
+        on_progress(0, 1, f"Searching: {search_query}")
 
     output_template = str(output_dir / "%(title)s.%(ext)s")
 
@@ -272,7 +303,7 @@ async def _download_single(
         "--match-filter", "duration<600",
         "--no-update",
         "--extractor-args", "youtube:player_client=android_vr",
-        search_query,
+        f"ytsearch:{search_query}",
     ]
 
     if on_progress:
@@ -316,8 +347,6 @@ async def _download_single(
             if page_info:
                 if page_info.get("album"):
                     track_meta["album"] = page_info["album"]
-                if page_info.get("track_num"):
-                    track_meta["track_num"] = page_info["track_num"]
 
             await asyncio.to_thread(embed_metadata, f, track_meta, cover_data)
 
@@ -353,7 +382,7 @@ async def _download_playlist(
 
     logger.info(f"Fetching playlist tracks from: {url}")
 
-    html_tracks = await _fetch_playlist_tracks_from_page(url)
+    html_tracks = await _fetch_all_playlist_tracks(url)
     if not html_tracks:
         html_tracks = [album_title] if album_title else []
 
@@ -376,15 +405,22 @@ async def _download_playlist(
 
     downloaded_files = []
 
-    for i, track_name in enumerate(html_tracks, 1):
-        logger.info(f"Downloading [{i}/{total}]: {track_name}")
-        if on_progress:
-            on_progress(i - 1, total, track_name)
+    for i, track_info in enumerate(html_tracks, 1):
+        if isinstance(track_info, dict):
+            track_name = track_info.get("title", "")
+            track_artist = track_info.get("artist", "")
+            track_cover = track_info.get("cover", "")
+        else:
+            track_name = str(track_info)
+            track_artist = ""
+            track_cover = ""
 
-        clean_title, parsed_artist = _parse_title_artist(track_name)
-        search_query = f"ytsearch:{clean_title} {parsed_artist}".strip() + " audio"
-        if not parsed_artist:
-            search_query = f"ytsearch:{clean_title} audio"
+        logger.info(f"Downloading [{i}/{total}]: {track_name} - {track_artist}")
+        if on_progress:
+            on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
+
+        search_query = _build_search_query(track_name, track_artist)
+        logger.info(f"Searching YouTube for: ytsearch:{search_query}")
 
         output_template = str(output_dir / "%(title)s.%(ext)s")
 
@@ -401,7 +437,7 @@ async def _download_playlist(
             "--match-filter", "duration<600",
             "--no-update",
             "--extractor-args", "youtube:player_client=android_vr",
-            search_query,
+            f"ytsearch:{search_query}",
         ]
 
         try:
@@ -413,17 +449,21 @@ async def _download_playlist(
             )
 
             if result.returncode == 0:
+                track_cover_data = cover_data
+                if track_cover and not track_cover_data:
+                    track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
+
                 for f in output_dir.iterdir():
                     if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
                         downloaded_files.append(f.name)
 
                         track_meta = {
-                            "title": clean_title,
-                            "artist": parsed_artist or "Unknown Artist",
+                            "title": track_name,
+                            "artist": track_artist or "Unknown Artist",
                             "album": album_title,
                             "track_num": str(i),
                         }
-                        await asyncio.to_thread(embed_metadata, f, track_meta, cover_data)
+                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data)
 
                         if on_file:
                             on_file(f.name)
@@ -443,27 +483,168 @@ async def _download_playlist(
     return downloaded_files
 
 
-async def _fetch_playlist_tracks_from_page(url: str) -> list[str]:
-    """Try to extract track names from Spotify playlist page."""
+async def _fetch_all_playlist_tracks(url: str) -> list[dict]:
+    """Fetch ALL tracks from a Spotify playlist/album using the internal API."""
+    info = extract_spotify_id(url)
+    if not info:
+        return []
+
+    content_type, content_id = info
+    tracks = []
+
+    if content_type == "album":
+        tracks = await _fetch_album_tracks(content_id)
+    elif content_type == "playlist":
+        tracks = await _fetch_playlist_tracks(content_id)
+
+    if not tracks:
+        tracks = await _fetch_tracks_from_page(url)
+
+    return tracks
+
+
+async def _fetch_album_tracks(album_id: str) -> list[dict]:
+    """Fetch all tracks from a Spotify album using the internal API."""
     try:
-        resp = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
+        api_url = f"https://open.spotify.com/album/{album_id}"
+        resp = await asyncio.to_thread(
+            requests.get, api_url,
+            {"headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, "timeout": 15}
+        )
         if resp.status_code != 200:
             return []
 
         html_text = resp.text
         tracks = []
 
-        meta_matches = re.findall(r'"name"\s*:\s*"([^"]+)"', html_text)
-        seen = set()
-        for name in meta_matches:
-            decoded = html.unescape(name)
-            if decoded not in seen and len(decoded) > 1 and decoded not in ("Spotify", "playlist", "album"):
-                seen.add(decoded)
-                tracks.append(decoded)
+        token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
+        if token_match:
+            token = token_match.group(1)
+            api_url = f"https://api.spotify.com/v1/albums/{album_id}"
+            api_resp = await asyncio.to_thread(
+                requests.get, api_url,
+                {"headers": {"Authorization": f"Bearer {token}"}, "timeout": 15}
+            )
+            if api_resp.status_code == 200:
+                data = api_resp.json()
+                for item in data.get("tracks", {}).get("items", []):
+                    track_name = item.get("name", "")
+                    artists = [a.get("name", "") for a in item.get("artists", [])]
+                    artist_str = ", ".join(artists)
+                    cover_url = ""
+                    if data.get("images"):
+                        cover_url = data["images"][0].get("url", "")
+                    tracks.append({
+                        "title": html.unescape(track_name),
+                        "artist": html.unescape(artist_str),
+                        "cover": _upgrade_cover_url(cover_url) if cover_url else "",
+                    })
+                return tracks
 
-        return tracks[:100]
+        title_matches = re.findall(r'"name"\s*:\s*"([^"]+)"', html_text)
+        artist_matches = re.findall(r'"artist"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', html_text)
+
+        seen = set()
+        for idx, name in enumerate(title_matches):
+            decoded = html.unescape(name)
+            if decoded in seen or len(decoded) < 2 or decoded.lower() in ("spotify", "album", "playlist"):
+                continue
+            seen.add(decoded)
+            artist = html.unescape(artist_matches[idx]) if idx < len(artist_matches) else ""
+            tracks.append({"title": decoded, "artist": artist, "cover": ""})
+
+        return tracks
+    except Exception as e:
+        logger.warning(f"Failed to fetch album tracks: {e}")
+        return []
+
+
+async def _fetch_playlist_tracks(playlist_id: str) -> list[dict]:
+    """Fetch all tracks from a Spotify playlist using the internal API with pagination."""
+    try:
+        api_url = f"https://open.spotify.com/playlist/{playlist_id}"
+        resp = await asyncio.to_thread(
+            requests.get, api_url,
+            {"headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, "timeout": 15}
+        )
+        if resp.status_code != 200:
+            return []
+
+        html_text = resp.text
+        token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
+        if not token_match:
+            return []
+
+        token = token_match.group(1)
+        tracks = []
+        offset = 0
+        limit = 100
+
+        while True:
+            api_url = f"https://api.spotify.com/v1/playlists/{playlist_id}/tracks?limit={limit}&offset={offset}"
+            api_resp = await asyncio.to_thread(
+                requests.get, api_url,
+                {"headers": {"Authorization": f"Bearer {token}"}, "timeout": 15}
+            )
+            if api_resp.status_code != 200:
+                break
+
+            data = api_resp.json()
+            items = data.get("items", [])
+
+            for item in items:
+                track = item.get("track")
+                if not track:
+                    continue
+                track_name = track.get("name", "")
+                artists = [a.get("name", "") for a in track.get("artists", [])]
+                artist_str = ", ".join(artists)
+                album_data = track.get("album", {})
+                cover_url = ""
+                if album_data.get("images"):
+                    cover_url = album_data["images"][0].get("url", "")
+                tracks.append({
+                    "title": html.unescape(track_name),
+                    "artist": html.unescape(artist_str),
+                    "cover": _upgrade_cover_url(cover_url) if cover_url else "",
+                })
+
+            if not data.get("next") or len(items) < limit:
+                break
+            offset += limit
+
+        return tracks
+    except Exception as e:
+        logger.warning(f"Failed to fetch playlist tracks: {e}")
+        return []
+
+
+async def _fetch_tracks_from_page(url: str) -> list[dict]:
+    """Fallback: extract track names from Spotify page HTML."""
+    try:
+        resp = await asyncio.to_thread(
+            requests.get, url,
+            {"headers": {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}, "timeout": 15}
+        )
+        if resp.status_code != 200:
+            return []
+
+        html_text = resp.text
+        tracks = []
+
+        title_matches = re.findall(r'"name"\s*:\s*"([^"]+)"', html_text)
+        artist_matches = re.findall(r'"artist"\s*:\s*\{[^}]*"name"\s*:\s*"([^"]+)"', html_text)
+
+        seen = set()
+        for idx, name in enumerate(title_matches):
+            decoded = html.unescape(name)
+            if decoded in seen or len(decoded) < 2 or decoded.lower() in ("spotify", "playlist", "album"):
+                continue
+            seen.add(decoded)
+            artist = html.unescape(artist_matches[idx]) if idx < len(artist_matches) else ""
+            tracks.append({"title": decoded, "artist": artist, "cover": ""})
+
+        return tracks
     except Exception as e:
         logger.warning(f"Failed to parse playlist page: {e}")
         return []

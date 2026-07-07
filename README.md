@@ -1,4 +1,4 @@
-# SPOTDOWN // Neon Edition
+# SPOTDOWN
 
 A cyberpunk-themed Spotify music downloader with a neon-glowing web UI.
 
@@ -10,6 +10,8 @@ A cyberpunk-themed Spotify music downloader with a neon-glowing web UI.
 - Cyberpunk/neon-themed responsive UI
 - Real-time SSE progress updates
 - Output directory selector
+- Playlist/album support with unlimited track fetching (pagination)
+- High-resolution cover art (640x640)
 
 ## Requirements
 
