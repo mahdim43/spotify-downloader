@@ -12,8 +12,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let selectedBitrate = '320';
     let selectedDir = '';
-    let embedLyrics = false;
+    let embedLyrics = true;
     let currentSource = null;
+
+    // Init lyrics label
+    if (lyricsLabel) {
+        lyricsLabel.textContent = 'ON';
+        lyricsLabel.style.color = 'var(--accent)';
+    }
 
     bitrateBtns.forEach((btn) => {
         btn.addEventListener('click', () => {

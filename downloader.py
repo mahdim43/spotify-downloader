@@ -162,7 +162,7 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
         params = {"artist_name": artist, "track_name": title}
         if duration > 0:
             params["duration"] = duration
-        resp = requests.get(f"{LRCLIB_API}/get", params=params, timeout=15)
+        resp = requests.get(f"{LRCLIB_API}/get", params=params, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             result = {}
@@ -174,7 +174,7 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
                 logger.info(f"Lyrics found (lrclib) for: {artist} - {title}")
                 return result
 
-        resp2 = requests.get(f"{LRCLIB_API}/search", params=params, timeout=15)
+        resp2 = requests.get(f"{LRCLIB_API}/search", params=params, timeout=30)
         if resp2.status_code == 200:
             results = resp2.json()
             if results:
@@ -193,7 +193,7 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
     try:
         safe_artist = requests.utils.quote(artist)
         safe_title = requests.utils.quote(title)
-        resp = requests.get(f"{LYRICS_OVH_API}/{safe_artist}/{safe_title}", timeout=15)
+        resp = requests.get(f"{LYRICS_OVH_API}/{safe_artist}/{safe_title}", timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             lyrics_text = data.get("lyrics", "")
