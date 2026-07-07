@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Spotify Downloader", version="1.0.0")
+app = FastAPI(title="SpotDownMoz", version="1.0.0")
 
 task_manager = TaskManager(
     download_dir=config.DOWNLOAD_DIR,

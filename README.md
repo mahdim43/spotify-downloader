@@ -1,4 +1,4 @@
-# SPOTDOWN
+# SPOTDOWNMOZ
 
 A cyberpunk-themed Spotify music downloader with a neon-glowing web UI.
 
@@ -23,8 +23,8 @@ A cyberpunk-themed Spotify music downloader with a neon-glowing web UI.
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/mahdim43/spotify-downloader.git
-   cd spotify-downloader
+   git clone https://github.com/mahdim43/spotdownmoz.git
+   cd spotdownmoz
    ```
 
 2. Create virtual environment:

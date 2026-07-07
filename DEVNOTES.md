@@ -1,4 +1,4 @@
-# Spotify Downloader - Development Notes & Lessons Learned
+# SpotDownMoz - Development Notes & Lessons Learned
 
 ## Critical Fixes Applied
 
