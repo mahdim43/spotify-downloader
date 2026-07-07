@@ -37,7 +37,7 @@ def check_dependencies():
     if not shutil.which("yt-dlp"):
         issues.append("yt-dlp not found in PATH")
 
-    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_ID:
+    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
         issues.append("SPOTIFY_CLIENT_ID/SECRET not set in .env (optional for single tracks, required for playlist metadata)")
 
     return issues

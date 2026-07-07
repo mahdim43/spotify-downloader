@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import html
 import logging
 import re
@@ -10,6 +11,8 @@ from typing import Callable
 import requests
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, USLT, SYLT, ID3NoHeaderError
 
+import config
+
 logger = logging.getLogger(__name__)
 
 SPOTIFY_URL_PATTERN = re.compile(
@@ -17,6 +20,28 @@ SPOTIFY_URL_PATTERN = re.compile(
 )
 
 SPOTIFY_OEMBED_URL = "https://open.spotify.com/oembed"
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+
+
+def _get_spotify_token() -> str | None:
+    """Get a Spotify API token using client credentials from .env."""
+    cid = config.SPOTIFY_CLIENT_ID
+    secret = config.SPOTIFY_CLIENT_SECRET
+    if not cid or not secret:
+        return None
+    try:
+        b64 = base64.b64encode(f"{cid}:{secret}".encode()).decode()
+        resp = requests.post(
+            SPOTIFY_TOKEN_URL,
+            data={"grant_type": "client_credentials"},
+            headers={"Authorization": f"Basic {b64}"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            return resp.json().get("access_token")
+    except Exception as e:
+        logger.warning(f"Failed to get Spotify token: {e}")
+    return None
 
 
 def is_spotify_url(url: str) -> bool:
@@ -661,33 +686,51 @@ async def _fetch_album_tracks(album_id: str) -> list[dict]:
         html_text = resp.text
 
         token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
-        if token_match:
-            token = token_match.group(1)
-
-            def fetch_api():
+        token = token_match.group(1) if token_match else _get_spotify_token()
+        if token:
+            def fetch_album():
                 return requests.get(
                     f"https://api.spotify.com/v1/albums/{album_id}",
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=15,
                 )
 
-            api_resp = await asyncio.to_thread(fetch_api)
-            if api_resp.status_code == 200:
+            album_resp = await asyncio.to_thread(fetch_album)
+            cover_url = ""
+            if album_resp.status_code == 200:
+                album_data = album_resp.json()
+                if album_data.get("images"):
+                    cover_url = album_data["images"][0].get("url", "")
+
+            tracks = []
+            offset = 0
+            limit = 50
+            while True:
+                def fetch_api():
+                    return requests.get(
+                        f"https://api.spotify.com/v1/albums/{album_id}/tracks?limit={limit}&offset={offset}",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=15,
+                    )
+
+                api_resp = await asyncio.to_thread(fetch_api)
+                if api_resp.status_code != 200:
+                    break
                 data = api_resp.json()
-                tracks = []
-                for item in data.get("tracks", {}).get("items", []):
+                items = data.get("items", [])
+                for item in items:
                     track_name = item.get("name", "")
                     artists = [a.get("name", "") for a in item.get("artists", [])]
                     artist_str = ", ".join(artists)
-                    cover_url = ""
-                    if data.get("images"):
-                        cover_url = data["images"][0].get("url", "")
                     tracks.append({
                         "title": html.unescape(track_name),
                         "artist": html.unescape(artist_str),
                         "cover": _upgrade_cover_url(cover_url) if cover_url else "",
                     })
-                return tracks
+                if not data.get("next") or len(items) < limit:
+                    break
+                offset += limit
+            return tracks
 
         track_ids = re.findall(r'spotify:track:([a-zA-Z0-9]+)', html_text)
         track_ids = list(dict.fromkeys(track_ids))
@@ -717,11 +760,11 @@ async def _fetch_playlist_tracks(playlist_id: str) -> list[dict]:
         html_text = resp.text
 
         token_match = re.search(r'"accessToken":"([^"]+)"', html_text)
-        if token_match:
-            token = token_match.group(1)
+        token = token_match.group(1) if token_match else _get_spotify_token()
+        if token:
             tracks = []
             offset = 0
-            limit = 100
+            limit = 50
             while True:
                 def fetch_api():
                     return requests.get(
