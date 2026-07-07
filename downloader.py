@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 import requests
-from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, ID3NoHeaderError
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, USLT, SYLT, ID3NoHeaderError
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,64 @@ def download_cover_image(url: str) -> bytes | None:
     return None
 
 
-def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
+LRCLIB_API = "https://lrclib.net/api"
+LYRICS_OVH_API = "https://api.lyrics.ovh/v1"
+
+
+def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
+    """Fetch lyrics from lrclib.net (synced + plain) with lyrics.ovh fallback (plain only).
+    Returns dict with 'plain' and/or 'synced' (LRC) lyrics.
+    """
+    try:
+        params = {"artist_name": artist, "track_name": title}
+        if duration > 0:
+            params["duration"] = duration
+        resp = requests.get(f"{LRCLIB_API}/get", params=params, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            result = {}
+            if data.get("plainLyrics"):
+                result["plain"] = data["plainLyrics"]
+            if data.get("syncedLyrics"):
+                result["synced"] = data["syncedLyrics"]
+            if result:
+                logger.info(f"Lyrics found (lrclib) for: {artist} - {title}")
+                return result
+
+        resp2 = requests.get(f"{LRCLIB_API}/search", params=params, timeout=15)
+        if resp2.status_code == 200:
+            results = resp2.json()
+            if results:
+                data = results[0]
+                result = {}
+                if data.get("plainLyrics"):
+                    result["plain"] = data["plainLyrics"]
+                if data.get("syncedLyrics"):
+                    result["synced"] = data["syncedLyrics"]
+                if result:
+                    logger.info(f"Lyrics found (lrclib search) for: {artist} - {title}")
+                    return result
+    except Exception as e:
+        logger.warning(f"lrclib lyrics fetch failed: {e}")
+
+    try:
+        safe_artist = requests.utils.quote(artist)
+        safe_title = requests.utils.quote(title)
+        resp = requests.get(f"{LYRICS_OVH_API}/{safe_artist}/{safe_title}", timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            lyrics_text = data.get("lyrics", "")
+            if lyrics_text:
+                logger.info(f"Lyrics found (lyrics.ovh) for: {artist} - {title}")
+                return {"plain": lyrics_text}
+    except Exception as e:
+        logger.warning(f"lyrics.ovh fetch failed: {e}")
+
+    logger.info(f"No lyrics found for: {artist} - {title}")
+    return None
+
+
+def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics: dict | None = None):
     """Embed ID3v2.3 metadata and album art into an MP3 file.
     Windows Explorer/Media Player require ID3v2.3 for cover art display.
     """
@@ -178,6 +235,38 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
                 desc="",
                 data=cover_data,
             ))
+
+        if lyrics:
+            if lyrics.get("plain"):
+                tags.delall("USLT")
+                tags.add(USLT(
+                    encoding=3,
+                    lang="eng",
+                    desc="",
+                    text=lyrics["plain"],
+                ))
+            if lyrics.get("synced"):
+                tags.delall("SYLT")
+                synced_lines = []
+                for line in lyrics["synced"].split("\n"):
+                    m = re.match(r'\[(\d+):(\d+)\.(\d+)\](.*)', line)
+                    if m:
+                        mins = int(m.group(1))
+                        secs = int(m.group(2))
+                        cs = int(m.group(3))
+                        text = m.group(4).strip()
+                        if text:
+                            timestamp_ms = (mins * 60 + secs) * 1000 + cs * 10
+                            synced_lines.append((text, timestamp_ms))
+                if synced_lines:
+                    tags.add(SYLT(
+                        encoding=3,
+                        lang="eng",
+                        desc="",
+                        type=1,
+                        format=2,
+                        text=synced_lines,
+                    ))
 
         tags.save(file_path, v2_version=3)
         logger.info(f"Embedded metadata into: {file_path.name} (ID3v2.3)")
@@ -221,11 +310,14 @@ async def download_spotify(
     url: str,
     output_dir: Path,
     bitrate: str = "320",
+    embed_lyrics: bool = False,
     on_progress: Callable[[int, int, str], None] | None = None,
     on_file: Callable[[str], None] | None = None,
     on_error: Callable[[str], None] | None = None,
-) -> list[str]:
-    """Download Spotify track using oEmbed metadata + yt-dlp YouTube search."""
+) -> dict:
+    """Download Spotify track using oEmbed metadata + yt-dlp YouTube search.
+    Returns dict with 'files' (success) and 'failed' (list of failed track dicts).
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     is_playlist_url = bool(re.search(r'/(playlist|album)/', url))
@@ -235,12 +327,12 @@ async def download_spotify(
     if is_playlist_url:
         return await _download_playlist(
             url, output_dir, bitrate, metadata, page_info,
-            on_progress, on_file, on_error
+            embed_lyrics, on_progress, on_file, on_error
         )
     else:
         return await _download_single(
             url, output_dir, bitrate, metadata, page_info,
-            on_progress, on_file, on_error
+            embed_lyrics, on_progress, on_file, on_error
         )
 
 
@@ -250,10 +342,11 @@ async def _download_single(
     bitrate: str,
     metadata: dict | None,
     page_info: dict | None,
+    embed_lyrics: bool,
     on_progress: Callable,
     on_file: Callable,
     on_error: Callable,
-) -> list[str]:
+) -> dict:
     """Download a single Spotify track with full metadata."""
     raw_title = ""
     if metadata:
@@ -316,9 +409,10 @@ async def _download_single(
         logger.error(f"yt-dlp failed: {error_msg}")
         if on_error:
             on_error(f"Download failed: {error_msg}")
-        raise RuntimeError(f"yt-dlp failed: {error_msg}")
+        return {"files": [], "failed": [{"title": clean_title, "artist": artist, "error": error_msg}]}
 
     downloaded_files = []
+    failed_tracks = []
     for f in output_dir.iterdir():
         if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
             downloaded_files.append(f.name)
@@ -343,7 +437,11 @@ async def _download_single(
                 if page_info.get("album"):
                     track_meta["album"] = page_info["album"]
 
-            await asyncio.to_thread(embed_metadata, f, track_meta, cover_data)
+            lyrics = None
+            if embed_lyrics and artist and clean_title:
+                lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
+
+            await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
 
             if on_file:
                 on_file(f.name)
@@ -352,7 +450,7 @@ async def _download_single(
         on_progress(1, 1, "Done")
 
     logger.info(f"Downloaded: {downloaded_files}")
-    return downloaded_files
+    return {"files": downloaded_files, "failed": failed_tracks}
 
 
 async def _download_playlist(
@@ -361,10 +459,11 @@ async def _download_playlist(
     bitrate: str,
     metadata: dict | None,
     page_info: dict | None,
+    embed_lyrics: bool,
     on_progress: Callable,
     on_file: Callable,
     on_error: Callable,
-) -> list[str]:
+) -> dict:
     """Download a Spotify playlist/album by searching each track on YouTube."""
     album_title = ""
     if metadata:
@@ -393,6 +492,7 @@ async def _download_playlist(
         return []
 
     downloaded_files = []
+    failed_tracks = []
 
     for i, track_info in enumerate(html_tracks, 1):
         if isinstance(track_info, dict):
@@ -452,24 +552,31 @@ async def _download_playlist(
                             "album": album_title,
                             "track_num": str(i),
                         }
-                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data)
+
+                        lyrics = None
+                        if embed_lyrics and track_artist and track_name:
+                            lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
+
+                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
 
                         if on_file:
                             on_file(f.name)
                         break
             else:
                 logger.warning(f"Failed track {i}/{total}: {track_name}")
+                failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed"})
                 if on_error:
                     on_error(f"Failed: {track_name}")
         except Exception as e:
             logger.error(f"Error downloading track {i}: {e}")
+            failed_tracks.append({"title": track_name, "artist": track_artist, "error": str(e)})
             if on_error:
                 on_error(f"Error: {track_name} - {e}")
 
     if on_progress:
         on_progress(total, total, "Done")
 
-    return downloaded_files
+    return {"files": downloaded_files, "failed": failed_tracks}
 
 
 async def _fetch_all_playlist_tracks(url: str) -> list[dict]:

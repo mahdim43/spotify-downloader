@@ -108,6 +108,42 @@ const UI = {
         });
     },
 
+    showResults(successFiles, failedTracks) {
+        const list = document.getElementById('filesList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        successFiles.forEach((file) => {
+            const name = file.split(/[/\\]/).pop();
+            const url = `/files/${encodeURIComponent(name)}`;
+            const displayName = name.replace(/\.mp3$/i, '');
+
+            const item = document.createElement('div');
+            item.className = 'file-item result-success';
+            item.innerHTML = `
+                <span class="result-icon">&#10003;</span>
+                <span class="file-name">${UI.escapeHtml(displayName)}</span>
+                <a href="${url}" download class="file-download-btn">GET</a>
+            `;
+            list.appendChild(item);
+        });
+
+        failedTracks.forEach((track) => {
+            const displayName = track.artist
+                ? `${track.artist} - ${track.title}`
+                : track.title;
+
+            const item = document.createElement('div');
+            item.className = 'file-item result-failed';
+            item.innerHTML = `
+                <span class="result-icon fail">&#10007;</span>
+                <span class="file-name">${UI.escapeHtml(displayName)}</span>
+                <span class="fail-reason">${UI.escapeHtml(track.error || 'Failed')}</span>
+            `;
+            list.appendChild(item);
+        });
+    },
+
     toast(message, type = 'info') {
         const container = document.getElementById('toastContainer');
         if (!container) return;

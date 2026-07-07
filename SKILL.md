@@ -1,4 +1,4 @@
-# SpotDownMoz Skill
+# SpotDown Skill
 
 ## Project Overview
 Self-hosted Spotify music downloader with cyberpunk web UI. Downloads tracks/albums/playlists as MP3 (192/320kbps) with full metadata via YouTube search.

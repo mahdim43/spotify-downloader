@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SPOTDOWNMOZ</title>
+    <title>SPOTDOWN</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -70,6 +70,15 @@
                         <button id="resetDirBtn" class="reset-dir-btn" title="Reset to default">&times;</button>
                     </div>
                 </div>
+
+                <div class="lyrics-toggle-group">
+                    <label class="input-label">EMBED_LYRICS</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="lyricsToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" id="lyricsLabel">OFF</span>
+                </div>
             </div>
 
             <div id="progressSection" class="glass-card progress-card hidden">
@@ -98,7 +107,7 @@
             <div id="filesSection" class="glass-card files-card hidden">
                 <h2 class="section-title">
                     <span class="title-icon">&#9835;</span>
-                    DOWNLOADED FILES
+                    DOWNLOAD RESULTS
                 </h2>
                 <div id="filesList" class="files-list"></div>
             </div>

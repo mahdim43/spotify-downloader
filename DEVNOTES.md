@@ -1,4 +1,4 @@
-# SpotDownMoz - Development Notes & Lessons Learned
+# SpotDown - Development Notes & Lessons Learned
 
 ## Critical Fixes Applied
 

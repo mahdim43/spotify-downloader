@@ -9,16 +9,18 @@ logger = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, url: str, bitrate: str = "320", output_dir: str = ""):
+    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False):
         self.id = str(uuid.uuid4())
         self.url = url
         self.bitrate = bitrate
         self.output_dir = output_dir
+        self.embed_lyrics = embed_lyrics
         self.status = "queued"
         self.total = 0
         self.completed = 0
         self.failed = 0
         self.files: list[str] = []
+        self.failed_tracks: list[dict] = []
         self.errors: list[str] = []
         self.current_track = ""
         self.subscribers: list[asyncio.Queue] = []
@@ -31,6 +33,7 @@ class Job:
             "completed": self.completed,
             "failed": self.failed,
             "files": self.files,
+            "failed_tracks": self.failed_tracks,
             "errors": self.errors,
             "current_track": self.current_track,
             "bitrate": self.bitrate,
@@ -77,8 +80,8 @@ class TaskManager:
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
-    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "") -> Job:
-        job = Job(url, bitrate, output_dir)
+    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False) -> Job:
+        job = Job(url, bitrate, output_dir, embed_lyrics)
         self.jobs[job.id] = job
         return job
 
@@ -97,20 +100,23 @@ class TaskManager:
             try:
                 from downloader import download_spotify
 
-                files = await download_spotify(
+                result = await download_spotify(
                     url=job.url,
                     output_dir=output_dir,
                     bitrate=job.bitrate,
+                    embed_lyrics=job.embed_lyrics,
                     on_progress=lambda cur, total, track: self._on_progress(job, cur, total, track),
                     on_file=lambda name: self._on_file(job, name),
                     on_error=lambda msg: self._on_error(job, msg),
                 )
 
-                job.files = files
+                job.files = result.get("files", [])
+                job.failed_tracks = result.get("failed", [])
                 job.status = "completed"
                 job.broadcast("complete", {
                     "status": "completed",
                     "files": job.files,
+                    "failed_tracks": job.failed_tracks,
                     "total": job.total,
                     "success": job.completed,
                     "failed": job.failed,

@@ -7,9 +7,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const browseBtn = document.getElementById('browseBtn');
     const resetDirBtn = document.getElementById('resetDirBtn');
     const downloadDirInput = document.getElementById('downloadDir');
+    const lyricsToggle = document.getElementById('lyricsToggle');
+    const lyricsLabel = document.getElementById('lyricsLabel');
 
     let selectedBitrate = '320';
     let selectedDir = '';
+    let embedLyrics = false;
     let currentSource = null;
 
     bitrateBtns.forEach((btn) => {
@@ -19,6 +22,14 @@ document.addEventListener('DOMContentLoaded', () => {
             selectedBitrate = btn.dataset.bitrate;
         });
     });
+
+    if (lyricsToggle) {
+        lyricsToggle.addEventListener('change', () => {
+            embedLyrics = lyricsToggle.checked;
+            lyricsLabel.textContent = embedLyrics ? 'ON' : 'OFF';
+            lyricsLabel.style.color = embedLyrics ? 'var(--accent)' : 'var(--text-muted)';
+        });
+    }
 
     browseBtn.addEventListener('click', async () => {
         if (window.showDirectoryPicker) {
@@ -76,7 +87,7 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.hideTrackInfo();
 
         try {
-            const result = await API.download(url, selectedBitrate, selectedDir);
+            const result = await API.download(url, selectedBitrate, selectedDir, embedLyrics);
             UI.setStatus('Job queued, downloading...');
 
             currentSource = API.connectProgress(result.job_id, {
@@ -126,16 +137,16 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.hideTrackInfo();
 
         const count = data.files?.length || 0;
-        UI.setDetail(`${count} file${count !== 1 ? 's' : ''} ready`);
+        const failedCount = data.failed_tracks?.length || 0;
+        UI.setDetail(`${count} ok, ${failedCount} failed`);
 
-        if (data.files && data.files.length > 0) {
+        if (count > 0 || failedCount > 0) {
             UI.showSection('filesSection');
-            UI.showFiles(data.files);
+            UI.showResults(data.files || [], data.failed_tracks || []);
         }
 
-        const failed = data.failed || 0;
-        if (failed > 0) {
-            UI.toast(`${failed} track(s) failed to download`, 'error');
+        if (failedCount > 0) {
+            UI.toast(`${failedCount} track(s) failed to download`, 'error');
         }
 
         resetButton();

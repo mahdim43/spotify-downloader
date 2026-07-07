@@ -1,4 +1,4 @@
-# SPOTDOWNMOZ
+# SPOTDOWN
 
 A cyberpunk-themed Spotify music downloader with a neon-glowing web UI.
 

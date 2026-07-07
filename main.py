@@ -21,7 +21,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SpotDownMoz", version="1.0.0")
+app = FastAPI(title="SPOTDOWN", version="1.0.0")
 
 task_manager = TaskManager(
     download_dir=config.DOWNLOAD_DIR,
@@ -33,6 +33,7 @@ class DownloadRequest(BaseModel):
     url: str
     bitrate: str = "320"
     output_dir: str = ""
+    embed_lyrics: bool = False
 
 
 SPOTIFY_URL_RE = re.compile(
@@ -74,8 +75,8 @@ async def api_download(req: DownloadRequest):
 
     output_dir = req.output_dir.strip() if req.output_dir else ""
 
-    job = task_manager.create_job(req.url, req.bitrate, output_dir)
-    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR}")
+    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics)
+    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics}")
 
     asyncio.create_task(task_manager.run_job(job))
 
