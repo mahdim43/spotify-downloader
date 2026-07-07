@@ -151,7 +151,9 @@ def download_cover_image(url: str) -> bytes | None:
 
 
 def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
-    """Embed ID3 metadata and album art into an MP3 file."""
+    """Embed ID3v2.3 metadata and album art into an MP3 file.
+    Windows Explorer/Media Player require ID3v2.3 for cover art display.
+    """
     try:
         try:
             tags = ID3(file_path)
@@ -177,8 +179,8 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
                 data=cover_data,
             ))
 
-        tags.save(file_path)
-        logger.info(f"Embedded metadata into: {file_path.name}")
+        tags.save(file_path, v2_version=3)
+        logger.info(f"Embedded metadata into: {file_path.name} (ID3v2.3)")
     except Exception as e:
         logger.warning(f"Failed to embed metadata: {e}")
 
