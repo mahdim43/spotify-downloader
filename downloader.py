@@ -507,6 +507,7 @@ async def _download_playlist(
 
     album_title = re.sub(r'\s*[\(\[].*?[\)\]]', '', album_title).strip()
     album_title = re.sub(r'\s*-\s*Spotify.*', '', album_title).strip()
+    album_title = _sanitize_filename(album_title)
 
     playlist_dir = output_dir / album_title if album_title else output_dir
     playlist_dir.mkdir(parents=True, exist_ok=True)
