@@ -173,7 +173,7 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
                 encoding=3,
                 mime="image/jpeg",
                 type=3,
-                desc="Cover",
+                desc="",
                 data=cover_data,
             ))
 
@@ -184,7 +184,7 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None):
 
 
 def _build_search_query(title: str, artist: str) -> str:
-    """Build accurate YouTube search query from full title and artist."""
+    """Build accurate YouTube search query from full title and artist, preferring audio-only."""
     parts = []
     if artist:
         clean_artist = re.sub(r'\s*,\s*feat\.?.*', '', artist, flags=re.IGNORECASE).strip()
@@ -196,7 +196,7 @@ def _build_search_query(title: str, artist: str) -> str:
         clean_title = re.sub(r'\s*\(ft\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
         parts.append(clean_title)
 
-    return " ".join(parts)
+    return " ".join(parts) + " official audio"
 
 
 def _parse_title_artist(raw_title: str) -> tuple[str, str]:
