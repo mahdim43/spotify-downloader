@@ -105,6 +105,15 @@ body {
     display: inline-block;
 }
 
+.logo-img {
+    display: block;
+    margin: 0 auto 1rem;
+    max-width: 120px;
+    height: auto;
+    filter: drop-shadow(0 0 15px var(--accent-glow)) drop-shadow(0 0 30px var(--accent-glow));
+    animation: glowPulse 3s ease-in-out infinite;
+}
+
 .logo {
     font-family: var(--font-display);
     font-size: 2.8rem;
