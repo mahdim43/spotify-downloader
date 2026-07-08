@@ -287,7 +287,8 @@ def _normalize_for_match(text: str) -> str:
 def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Path | None:
     """Find a matching mp3 file for a track in a folder.
 
-    Checks ID3 tags first (exact normalize match), then falls back to fuzzy filename matching.
+    Checks ID3 tags first (exact normalized match), then falls back to filename matching.
+    Both artist AND name must match — not just one or the other.
     Returns the Path of the matching file, or None.
     """
     track_norm = _normalize_for_match(f"{track_artist} {track_name}")
@@ -297,6 +298,25 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
 
     name_keywords = {w for w in name_norm.split() if w not in stop_words}
     artist_keywords = {w for w in artist_norm.split() if w not in stop_words}
+
+    def _parse_artist_title(stem_norm: str):
+        base = re.sub(r'\s*[\(\[].*?[\)\]]', '', stem_norm).strip()
+        if " - " in base:
+            parts = base.split(" - ", 1)
+            return set(parts[0].split()), set(parts[1].split())
+        return None, set(base.split())
+
+    def _title_matches(file_title_words: set) -> bool:
+        if not name_keywords:
+            return True
+        name_str = " ".join(sorted(name_keywords))
+        title_str = " ".join(sorted(file_title_words))
+        if name_str == title_str:
+            return True
+        if len(name_keywords) <= 3:
+            return False
+        score = len(name_keywords & file_title_words) / len(name_keywords)
+        return score >= 0.8
 
     for f in folder.iterdir():
         if f.suffix.lower() != ".mp3" or not f.is_file():
@@ -312,12 +332,16 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
             pass
 
         stem_norm = _normalize_for_match(f.stem)
-        stem_words = set(stem_norm.split())
+        file_artist, file_title = _parse_artist_title(stem_norm)
 
-        if artist_keywords and artist_keywords.issubset(stem_words):
-            return f
-        if name_keywords and len(name_keywords & stem_words) >= len(name_keywords) * 0.6:
-            return f
+        if file_artist is not None:
+            artist_ok = (artist_keywords and artist_keywords.issubset(file_artist)) or \
+                        (artist_keywords and len(artist_keywords & file_artist) >= len(file_artist) * 0.8 and file_artist)
+            if artist_ok and _title_matches(file_title):
+                return f
+        else:
+            if artist_keywords and artist_keywords.issubset(file_title) and _title_matches(file_title):
+                return f
 
     return None
 
