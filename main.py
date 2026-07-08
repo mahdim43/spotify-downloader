@@ -46,6 +46,10 @@ class RetryRequest(BaseModel):
     is_album: bool = False
 
 
+class SearchRequest(BaseModel):
+    query: str
+
+
 SPOTIFY_URL_RE = re.compile(
     r'https?://open\.spotify\.com/(track|playlist|album)/([a-zA-Z0-9]+)'
 )
@@ -306,6 +310,18 @@ async def api_health():
         "ytdlp_available": shutil.which("yt-dlp") is not None,
         "download_dir": str(config.DOWNLOAD_DIR),
     }
+
+
+@app.post("/api/search")
+async def api_search(req: SearchRequest):
+    """Search Spotify for tracks by name/artist."""
+    query = req.query.strip()
+    if not query:
+        return JSONResponse(status_code=400, content={"error": "Search query is required"})
+
+    from downloader import search_spotify
+    results = await asyncio.to_thread(search_spotify, query, 10)
+    return {"results": results, "query": query}
 
 
 app.mount("/static", StaticFiles(directory=str(config.BASE_DIR / "static")), name="static")

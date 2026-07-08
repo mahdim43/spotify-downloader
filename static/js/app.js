@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const stopBtn = document.getElementById('stopBtn');
     const resumeBtn = document.getElementById('resumeBtn');
     const retryAllBtn = document.getElementById('retryAllBtn');
+    const searchSection = document.getElementById('searchSection');
+    const searchResults = document.getElementById('searchResults');
 
     let selectedBitrate = '320';
     let selectedDir = '';
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSource = null;
     let currentJobId = null;
     let isAlbum = false;
+    let searchTimeout = null;
 
     // Init lyrics label
     if (lyricsLabel) {
@@ -199,30 +202,101 @@ document.addEventListener('DOMContentLoaded', () => {
         })();
     });
 
+    // Search result download button delegation
+    document.addEventListener('click', (e) => {
+        const dlBtn = e.target.closest('.search-download-btn');
+        if (!dlBtn) return;
+        const url = dlBtn.dataset.url;
+        if (url) downloadFromSearch(url);
+    });
+
     goBtn.addEventListener('click', startDownload);
     urlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') startDownload();
     });
 
     async function startDownload() {
-        const url = urlInput.value.trim();
-        if (!url) {
-            UI.toast('Paste a Spotify URL first', 'error');
+        const input = urlInput.value.trim();
+        if (!input) {
+            UI.toast('Enter a Spotify URL or search for a song', 'error');
             urlInput.focus();
             return;
         }
 
-        if (!url.includes('open.spotify.com')) {
-            UI.toast('Invalid Spotify URL', 'error');
+        const isUrl = /open\.spotify\.com\/(track|playlist|album)\//.test(input);
+
+        if (isUrl) {
+            await startUrlDownload(input);
+        } else {
+            await startSearch(input);
+        }
+    }
+
+    async function startSearch(query) {
+        goBtn.disabled = true;
+        goBtn.classList.add('loading');
+        goBtn.querySelector('.go-text').textContent = 'SEARCHING';
+
+        UI.hideSection('progressSection');
+        UI.hideSection('filesSection');
+        UI.showSection('searchSection');
+        searchResults.innerHTML = '<div class="search-loading">Searching Spotify...</div>';
+
+        try {
+            const data = await API.search(query);
+            renderSearchResults(data.results || []);
+        } catch (err) {
+            searchResults.innerHTML = `<div class="search-empty">${UI.escapeHtml(err.message)}</div>`;
+        } finally {
+            goBtn.disabled = false;
+            goBtn.classList.remove('loading');
+            goBtn.querySelector('.go-text').textContent = 'EXEC';
+        }
+    }
+
+    function renderSearchResults(tracks) {
+        if (!tracks.length) {
+            searchResults.innerHTML = '<div class="search-empty">No results found</div>';
             return;
         }
 
+        searchResults.innerHTML = '';
+        tracks.forEach((track) => {
+            const item = document.createElement('div');
+            item.className = 'search-item';
+
+            const coverHtml = track.cover
+                ? `<img class="search-cover" src="${UI.escapeHtml(track.cover)}" alt="" loading="lazy">`
+                : `<div class="search-cover-placeholder">&#9835;</div>`;
+
+            const explicitTag = track.explicit ? '<span class="search-explicit">E</span>' : '';
+
+            item.innerHTML = `
+                ${coverHtml}
+                <div class="search-info">
+                    <div class="search-title">${explicitTag}${UI.escapeHtml(track.title)}</div>
+                    <div class="search-meta">${UI.escapeHtml(track.artist)}${track.album ? ' &middot; ' + UI.escapeHtml(track.album) : ''}</div>
+                </div>
+                <span class="search-duration">${UI.escapeHtml(track.duration)}</span>
+                <button class="search-download-btn" data-url="${UI.escapeHtml(track.url)}">DOWNLOAD</button>
+            `;
+            searchResults.appendChild(item);
+        });
+    }
+
+    async function downloadFromSearch(spotifyUrl) {
+        UI.hideSection('searchSection');
+        await startUrlDownload(spotifyUrl);
+    }
+
+    async function startUrlDownload(url) {
         goBtn.disabled = true;
         goBtn.classList.add('loading');
         goBtn.querySelector('.go-text').textContent = 'LOADING';
 
         UI.showSection('progressSection');
         UI.hideSection('filesSection');
+        UI.hideSection('searchSection');
         UI.setProgress(0);
         UI.setPercent('0%');
         UI.setStatus('Connecting...');

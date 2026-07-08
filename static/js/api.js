@@ -35,6 +35,17 @@ const API = {
         return data;
     },
 
+    async search(query) {
+        const resp = await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Search failed');
+        return data;
+    },
+
     connectProgress(jobId, callbacks) {
         const source = new EventSource(`/api/progress/${jobId}`);
 

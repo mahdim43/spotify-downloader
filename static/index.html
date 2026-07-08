@@ -28,13 +28,13 @@
         <main class="main">
             <div class="glass-card input-card">
                 <div class="input-group">
-                    <label class="input-label">SPOTIFY_URL</label>
+                    <label class="input-label">SPOTIFY_URL / SEARCH</label>
                     <div class="url-input-wrapper">
                         <input
                             type="text"
                             id="urlInput"
                             class="url-input"
-                            placeholder="https://open.spotify.com/track/..."
+                            placeholder="Paste Spotify URL or search by song name..."
                             autocomplete="off"
                             spellcheck="false"
                         >
@@ -78,6 +78,14 @@
                     </label>
                     <span class="toggle-label" id="lyricsLabel">OFF</span>
                 </div>
+            </div>
+
+            <div id="searchSection" class="glass-card search-card hidden">
+                <h2 class="section-title">
+                    <span class="title-icon">&#128269;</span>
+                    SEARCH RESULTS
+                </h2>
+                <div id="searchResults" class="search-results"></div>
             </div>
 
             <div id="progressSection" class="glass-card progress-card hidden">

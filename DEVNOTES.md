@@ -39,25 +39,49 @@
 **Problem:** yt-dlp `ytsearch:{query}` returns music videos over audio-only tracks.
 **Fix:** Append `" official audio"` to search query to prefer audio-only uploads.
 
+### 10. Playlist/Album Cover Art Fallback
+**Problem:** `spotify_scraper` track objects don't have images for individual tracks in albums/playlists — only the album/playlist itself has an image.
+**Fix:** Fall back to `album.images[0].url` or `playlist.images[0].url` when per-track images are empty.
+
+### 11. Album Track Numbering
+**Problem:** No way to identify track order in downloaded album files.
+**Fix:** Prefix filenames with zero-padded track number for albums only (e.g., `01.Song - Artist.mp3`). Uses `is_album` flag detected from URL (`/album/` vs `/playlist/`).
+
+### 12. Spotify Search Integration
+**Problem:** Users had to find Spotify URLs manually before downloading.
+**Fix:** Added `search_spotify()` using `spotify_scraper` client's `client.search()` method. Frontend auto-detects URL vs search query — typing a song name shows search results with cover art, artist, album, duration, and DOWNLOAD button.
+
 ## Architecture
 
 - **FastAPI** backend with SSE progress streaming
 - **yt-dlp** for YouTube search/download + ffmpeg for MP3 conversion
 - **mutagen** for ID3 tag embedding (title, artist, album, track#)
-- **Spotify oEmbed + page scraping** for metadata (no API credentials needed)
+- **spotify_scraper** for search + metadata (no API credentials needed)
 - Cyberpunk/neon-themed web UI
 
 ## File Structure
 ```
-main.py          - FastAPI app, routes, SSE
-downloader.py    - Core download logic, metadata, cover art
+main.py          - FastAPI app, routes, SSE, search endpoint
+downloader.py    - Core download logic, metadata, cover art, search
 tasks.py         - Job management, progress broadcasting
 transcoder.py    - Audio transcoding utilities
 config.py        - Settings, dependency checks
 static/          - Frontend (HTML, CSS, JS)
 ```
 
+## API Endpoints
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | /api/download | Start download (URL or search result) |
+| POST | /api/search | Search Spotify tracks by name |
+| POST | /api/stop/{id} | Stop running job |
+| POST | /api/resume/{id} | Resume stopped job |
+| POST | /api/retry/{id} | Retry failed tracks |
+| GET | /api/progress/{id} | SSE progress stream |
+| GET | /api/health | Health check |
+
 ## Spotify Metadata Extraction Flow
 1. oEmbed API → title, thumbnail (no auth required)
 2. Page HTML scrape → og:image, og:description, ld+json (artist, album)
-3. For playlists: extract `spotify:track:XXX` IDs from HTML, then fetch each via oEmbed + page scrape
+3. For playlists/albums: `spotify_scraper` client with fallback cover art
+4. For search: `client.search(query, types=["track"])` returns rich track data

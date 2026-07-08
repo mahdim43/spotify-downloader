@@ -463,6 +463,34 @@ def _parse_title_artist(raw_title: str) -> tuple[str, str]:
     return raw_title.strip(), ""
 
 
+def search_spotify(query: str, limit: int = 10) -> list[dict]:
+    """Search Spotify for tracks by name/artist. Returns list of track dicts."""
+    try:
+        client = _get_spotify_client()
+        results = client.search(query, types=["track"], limit=limit)
+        tracks = []
+        for t in results.tracks:
+            artist_names = ", ".join(a.name for a in t.artists) if t.artists else "Unknown Artist"
+            album_name = t.album.name if t.album else ""
+            cover_url = t.images[0].url if t.images and t.images[0].url else ""
+            duration_sec = t.duration_ms // 1000 if t.duration_ms else 0
+            spotify_url = t.share_url or f"https://open.spotify.com/track/{t.id}"
+            tracks.append({
+                "title": html.unescape(t.name) if t.name else "",
+                "artist": html.unescape(artist_names),
+                "album": html.unescape(album_name),
+                "duration": f"{duration_sec // 60}:{duration_sec % 60:02d}",
+                "cover": cover_url,
+                "url": spotify_url,
+                "explicit": t.explicit,
+            })
+        logger.info(f"Spotify search for '{query}': {len(tracks)} results")
+        return tracks
+    except Exception as e:
+        logger.warning(f"Spotify search failed for '{query}': {e}")
+        return []
+
+
 async def download_spotify(
     url: str,
     output_dir: Path,
