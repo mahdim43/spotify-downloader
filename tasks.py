@@ -142,7 +142,7 @@ class TaskManager:
 
     def _on_file(self, job: Job, name: str):
         job.files.append(name)
-        job.broadcast("progress", {
+        job.broadcast("file", {
             "status": "downloading",
             "current": job.completed,
             "total": job.total,

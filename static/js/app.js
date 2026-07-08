@@ -103,6 +103,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 onProgress(data) {
                     handleProgress(data);
                 },
+                onFile(data) {
+                    handleFile(data);
+                },
                 onComplete(data) {
                     handleComplete(data);
                 },
@@ -127,14 +130,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const trackName = data.track || 'Unknown Track';
             UI.setStatus(`Downloading ${current}/${total}`);
             UI.setTrackInfo(`${current}. ${trackName}`);
-
-            if (trackName.endsWith('.mp3')) {
-                UI.addSuccess(trackName);
-            }
         }
 
         if (data.status === 'transcoding') {
             UI.setStatus(`Transcoding ${data.current}/${data.total}...`);
+        }
+    }
+
+    function handleFile(data) {
+        const trackName = data.track || '';
+        if (trackName) {
+            UI.addSuccess(trackName);
         }
     }
 
@@ -148,11 +154,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const count = data.files?.length || 0;
         const failedCount = data.failed_tracks?.length || 0;
-        UI.setDetail(`${count} ok, ${failedCount} failed`);
+        const skippedCount = (data.files || []).filter(f => f.startsWith('(exists)')).length;
+        const downloadedCount = count - skippedCount;
+        UI.setDetail(`${downloadedCount} downloaded, ${skippedCount} skipped, ${failedCount} failed`);
 
-        if (failedCount > 0) {
-            UI.showResults(data.files || [], data.failed_tracks || []);
-        }
+        UI.showResults(data.files || [], data.failed_tracks || []);
 
         if (failedCount > 0) {
             UI.toast(`${failedCount} track(s) failed to download`, 'error');

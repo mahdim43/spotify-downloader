@@ -27,6 +27,13 @@ const API = {
             } catch {}
         });
 
+        source.addEventListener('file', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                callbacks.onFile?.(data);
+            } catch {}
+        });
+
         source.addEventListener('complete', (e) => {
             try {
                 const data = JSON.parse(e.data);

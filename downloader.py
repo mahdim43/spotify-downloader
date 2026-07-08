@@ -291,6 +291,12 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
     Both artist AND name must match — not just one or the other.
     Returns the Path of the matching file, or None.
     """
+    logger.info(f"Skip check: looking for '{track_artist} - {track_name}' in {folder}")
+    if not folder.exists():
+        logger.info(f"Skip check: folder does not exist: {folder}")
+        return None
+    mp3_count = sum(1 for f in folder.iterdir() if f.suffix.lower() == ".mp3" and f.is_file())
+    logger.info(f"Skip check: {mp3_count} mp3 files in {folder}")
     track_norm = _normalize_for_match(f"{track_artist} {track_name}")
     name_norm = _normalize_for_match(track_name)
     artist_norm = _normalize_for_match(track_artist)
@@ -327,6 +333,7 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
             t = str(tags.get("TIT2", ""))
             a = str(tags.get("TPE1", ""))
             if t and a and _normalize_for_match(f"{a} {t}") == track_norm:
+                logger.info(f"Skip check: ID3 match: {f.name} for {track_artist} - {track_name}")
                 return f
         except Exception:
             pass
@@ -338,11 +345,14 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
             artist_ok = (artist_keywords and artist_keywords.issubset(file_artist)) or \
                         (artist_keywords and len(artist_keywords & file_artist) >= len(file_artist) * 0.8 and file_artist)
             if artist_ok and _title_matches(file_title):
+                logger.info(f"Skip check: filename match: {f.name} for {track_artist} - {track_name}")
                 return f
         else:
             if artist_keywords and artist_keywords.issubset(file_title) and _title_matches(file_title):
+                logger.info(f"Skip check: filename match (no artist): {f.name} for {track_artist} - {track_name}")
                 return f
 
+    logger.info(f"Skip check: no match for '{track_artist} - {track_name}' in {folder}")
     return None
 
 
