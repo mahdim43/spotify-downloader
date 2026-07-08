@@ -579,6 +579,9 @@ async def _download_playlist(
     downloaded_files = []
     failed_tracks = []
 
+    def _safe(text: str) -> str:
+        return text.encode("ascii", "replace").decode("ascii")
+
     for i, track_info in enumerate(html_tracks, 1):
         if isinstance(track_info, dict):
             track_name = track_info.get("title", "")
@@ -589,13 +592,13 @@ async def _download_playlist(
             track_artist = ""
             track_cover = ""
 
-        logger.info(f"Downloading [{i}/{total}]: {track_name} - {track_artist}")
+        logger.info(f"Downloading [{i}/{total}]: {_safe(track_name)} - {_safe(track_artist)}")
         if on_progress:
             on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
 
         existing = _find_existing_track(track_name, track_artist, playlist_dir)
         if existing:
-            logger.info(f"Skipping (already exists): {track_name} - {track_artist}")
+            logger.info(f"Skipping (already exists): {_safe(track_name)} - {_safe(track_artist)}")
             downloaded_files.append(existing.name)
             if on_file:
                 on_file("(exists) " + existing.name)
@@ -604,7 +607,7 @@ async def _download_playlist(
             continue
 
         search_query = _build_search_query(track_name, track_artist)
-        logger.info(f"Searching YouTube for: ytsearch:{search_query}")
+        logger.info(f"Searching YouTube for: ytsearch:{_safe(search_query)}")
 
         output_template = str(playlist_dir / "%(title)s.%(ext)s")
 
