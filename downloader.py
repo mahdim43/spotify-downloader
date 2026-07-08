@@ -523,7 +523,9 @@ async def _download_single(
 
     for f in output_dir.iterdir():
         if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-            new_name = _clean_yt_filename(f.stem) + f.suffix
+            safe_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
+            safe_title = _sanitize_filename(clean_title) if clean_title else _clean_yt_filename(f.stem)
+            new_name = f"{safe_artist} - {safe_title}.mp3"
             if new_name != f.name:
                 new_path = f.parent / new_name
                 if not new_path.exists():
@@ -593,7 +595,7 @@ async def _download_playlist(
     album_title = re.sub(r'\s*-\s*Spotify.*', '', album_title).strip()
     album_title = _sanitize_filename(album_title)
 
-    playlist_dir = output_dir / album_title if album_title else output_dir
+    playlist_dir = output_dir
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Download folder: {playlist_dir}")
@@ -689,7 +691,9 @@ async def _download_playlist(
 
                 for f in playlist_dir.iterdir():
                     if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-                        new_name = _clean_yt_filename(f.stem) + f.suffix
+                        safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
+                        safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(f.stem)
+                        new_name = f"{safe_artist} - {safe_title}.mp3"
                         if new_name != f.name:
                             new_path = f.parent / new_name
                             if not new_path.exists():
