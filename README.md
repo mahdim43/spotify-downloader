@@ -3,7 +3,7 @@
 <h1 align="center">[ SPOTDOWN ]</h1>
 
 <p align="center">
-  <b>Self-hosted Spotify downloader with a cyberpunk neon UI</b><br>
+  <b>Self-hosted Spotify downloader with a modern cyberpunk UI</b><br>
   <sub>Search songs by name • Download tracks, albums & playlists • Full metadata embedding</sub>
 </p>
 

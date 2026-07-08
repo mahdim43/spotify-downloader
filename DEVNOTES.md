@@ -57,7 +57,7 @@
 - **yt-dlp** for YouTube search/download + ffmpeg for MP3 conversion
 - **mutagen** for ID3 tag embedding (title, artist, album, track#)
 - **spotify_scraper** for search + metadata (no API credentials needed)
-- Cyberpunk/neon-themed web UI
+- Cyberpunk-themed web UI
 
 ## File Structure
 ```
