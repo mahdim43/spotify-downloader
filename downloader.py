@@ -276,6 +276,11 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics
         logger.warning(f"Failed to embed metadata: {e}")
 
 
+def _safe_log(text: str) -> str:
+    """Encode text as ASCII-safe for Windows console logging."""
+    return text.encode("ascii", "replace").decode("ascii")
+
+
 def _normalize_for_match(text: str) -> str:
     """Normalize for fuzzy matching: lowercase, strip punctuation, collapse whitespace."""
     text = text.lower()
@@ -291,7 +296,7 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
     Both artist AND name must match — not just one or the other.
     Returns the Path of the matching file, or None.
     """
-    logger.info(f"Skip check: looking for '{track_artist} - {track_name}' in {folder}")
+    logger.info(f"Skip check: looking for '{_safe_log(track_artist)} - {_safe_log(track_name)}' in {folder}")
     if not folder.exists():
         logger.info(f"Skip check: folder does not exist: {folder}")
         return None
@@ -333,7 +338,7 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
             t = str(tags.get("TIT2", ""))
             a = str(tags.get("TPE1", ""))
             if t and a and _normalize_for_match(f"{a} {t}") == track_norm:
-                logger.info(f"Skip check: ID3 match: {f.name} for {track_artist} - {track_name}")
+                logger.info(f"Skip check: ID3 match: {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
                 return f
         except Exception:
             pass
@@ -345,14 +350,14 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
             artist_ok = (artist_keywords and artist_keywords.issubset(file_artist)) or \
                         (artist_keywords and len(artist_keywords & file_artist) >= len(file_artist) * 0.8 and file_artist)
             if artist_ok and _title_matches(file_title):
-                logger.info(f"Skip check: filename match: {f.name} for {track_artist} - {track_name}")
+                logger.info(f"Skip check: filename match: {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
                 return f
         else:
             if artist_keywords and artist_keywords.issubset(file_title) and _title_matches(file_title):
-                logger.info(f"Skip check: filename match (no artist): {f.name} for {track_artist} - {track_name}")
+                logger.info(f"Skip check: filename match (no artist): {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
                 return f
 
-    logger.info(f"Skip check: no match for '{track_artist} - {track_name}' in {folder}")
+    logger.info(f"Skip check: no match for '{_safe_log(track_artist)} - {_safe_log(track_name)}' in {folder}")
     return None
 
 
@@ -623,9 +628,6 @@ async def _download_playlist(
     skipped_files = []
     failed_tracks = []
 
-    def _safe(text: str) -> str:
-        return text.encode("ascii", "replace").decode("ascii")
-
     for i, track_info in enumerate(html_tracks, 1):
         if isinstance(track_info, dict):
             track_name = track_info.get("title", "")
@@ -636,7 +638,7 @@ async def _download_playlist(
             track_artist = ""
             track_cover = ""
 
-        logger.info(f"Downloading [{i}/{total}]: {_safe(track_name)} - {_safe(track_artist)}")
+        logger.info(f"Downloading [{i}/{total}]: {_safe_log(track_name)} - {_safe_log(track_artist)}")
         if on_progress:
             on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
 
@@ -650,7 +652,7 @@ async def _download_playlist(
                     if existing:
                         break
         if existing:
-            logger.info(f"Skipping (already exists): {_safe(track_name)} - {_safe(track_artist)}")
+            logger.info(f"Skipping (already exists): {_safe_log(track_name)} - {_safe_log(track_artist)}")
             skipped_files.append(existing.name)
             if on_file:
                 on_file("(exists) " + existing.name)
@@ -658,10 +660,10 @@ async def _download_playlist(
                 on_progress(i, total, f"Skipped (exists): {track_artist} - {track_name}" if track_artist else f"Skipped (exists): {track_name}")
             continue
         else:
-            logger.info(f"Not found, will download: {_safe(track_name)} - {_safe(track_artist)}")
+            logger.info(f"Not found, will download: {_safe_log(track_name)} - {_safe_log(track_artist)}")
 
         search_query = _build_search_query(track_name, track_artist)
-        logger.info(f"Searching YouTube for: ytsearch:{_safe(search_query)}")
+        logger.info(f"Searching YouTube for: ytsearch:{_safe_log(search_query)}")
 
         output_template = str(playlist_dir / "%(title)s.%(ext)s")
 
