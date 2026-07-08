@@ -270,7 +270,8 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics
                     ))
 
         tags.save(file_path, v2_version=3)
-        logger.info(f"Embedded metadata into: {file_path.name} (ID3v2.3)")
+        safe_name = file_path.name.encode('ascii', 'replace').decode('ascii')
+        logger.info(f"Embedded metadata into: {safe_name} (ID3v2.3)")
     except Exception as e:
         logger.warning(f"Failed to embed metadata: {e}")
 
@@ -327,7 +328,7 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _clean_yt_filename(name: str) -> str:
-    """Strip YouTube suffixes like (Official Audio), (Audio), (Official Music Video), etc."""
+    """Strip YouTube suffixes and unusual characters from downloaded filenames."""
     cleaned = re.sub(r'\s*\(Official\s*Audio\)', '', name, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\(Official\s*Music\s*Video\)', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\(Audio\)', '', cleaned, flags=re.IGNORECASE)
@@ -341,6 +342,8 @@ def _clean_yt_filename(name: str) -> str:
     cleaned = re.sub(r'\s*\[Lyrics\]', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\(Visualizer\)', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\[Visualizer\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'[⧸⁄]', ' - ', cleaned)
+    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
     return cleaned.strip()
 
 
