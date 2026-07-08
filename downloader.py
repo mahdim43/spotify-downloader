@@ -426,7 +426,7 @@ def _clean_yt_filename(name: str) -> str:
     return cleaned.strip()
 
 
-def _build_search_query(title: str, artist: str, uncensored: bool = False) -> str:
+def _build_search_query(title: str, artist: str) -> str:
     """Build accurate YouTube search query from full title and artist, preferring audio-only."""
     parts = []
     if artist:
@@ -444,8 +444,6 @@ def _build_search_query(title: str, artist: str, uncensored: bool = False) -> st
         parts.append(clean_title)
 
     query = " ".join(parts) + " official audio"
-    if uncensored:
-        query += " uncensored"
     return query
 
 
@@ -470,7 +468,6 @@ async def download_spotify(
     output_dir: Path,
     bitrate: str = "320",
     embed_lyrics: bool = False,
-    uncensored: bool = False,
     stop_event: asyncio.Event | None = None,
     start_index: int = 0,
     on_progress: Callable[[int, int, str], None] | None = None,
@@ -483,13 +480,15 @@ async def download_spotify(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     is_playlist_url = bool(re.search(r'/(playlist|album)/', url))
+    is_album = bool(re.search(r'/album/', url))
     metadata = get_spotify_metadata(url)
     page_info = get_spotify_track_info_from_url(url)
 
     if is_playlist_url:
         return await _download_playlist(
             url, output_dir, bitrate, metadata, page_info,
-            embed_lyrics, uncensored, stop_event, start_index, on_progress, on_file, on_error
+            embed_lyrics, stop_event, start_index, on_progress, on_file, on_error,
+            is_album=is_album
         )
     else:
         return await _download_single(
@@ -640,12 +639,12 @@ async def _download_playlist(
     metadata: dict | None,
     page_info: dict | None,
     embed_lyrics: bool,
-    uncensored: bool,
     stop_event: asyncio.Event | None,
     start_index: int,
     on_progress: Callable,
     on_file: Callable,
     on_error: Callable,
+    is_album: bool = False,
 ) -> dict:
     """Download a Spotify playlist/album by searching each track on YouTube."""
     album_title = ""
@@ -728,7 +727,7 @@ async def _download_playlist(
         else:
             logger.info(f"Not found, will download: {_safe_log(track_name)} - {_safe_log(track_artist)}")
 
-        search_query = _build_search_query(track_name, track_artist, uncensored)
+        search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{_safe_log(search_query)}")
 
         output_template = str(playlist_dir / "%(title)s.%(ext)s")
@@ -777,11 +776,16 @@ async def _download_playlist(
                 track_cover_data = None
                 if track_cover:
                     track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
+                else:
+                    logger.warning(f"No cover URL for track {i}: {track_name}")
 
                 for f in new_mp3s:
                     safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
                     safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(f.stem)
-                    new_name = f"{safe_title} - {safe_artist}.mp3"
+                    if is_album:
+                        new_name = f"{i:02d}.{safe_title} - {safe_artist}.mp3"
+                    else:
+                        new_name = f"{safe_title} - {safe_artist}.mp3"
                     if new_name != f.name:
                         new_path = f.parent / new_name
                         if not new_path.exists():
@@ -868,24 +872,28 @@ async def _fetch_all_playlist_tracks(url: str) -> list[dict]:
     try:
         if content_type == "album":
             album = await asyncio.to_thread(client.get_album, content_id)
+            album_cover = _upgrade_cover_url(album.images[0].url) if album.images and album.images[0].url else ""
             tracks = []
             for t in album.tracks:
+                cover = _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else album_cover
                 tracks.append({
                     "title": html.unescape(t.name) if t.name else "",
                     "artist": html.unescape(", ".join(a.name for a in t.artists)) if t.artists else "",
-                    "cover": _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else "",
+                    "cover": cover,
                 })
             logger.info(f"Found {len(tracks)} tracks in album")
             return tracks
         elif content_type == "playlist":
             playlist = await asyncio.to_thread(client.get_playlist, content_id, max_tracks=None)
+            playlist_cover = _upgrade_cover_url(playlist.images[0].url) if playlist.images and playlist.images[0].url else ""
             tracks = []
             for pt in playlist.tracks:
                 t = pt.track
+                cover = _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else playlist_cover
                 tracks.append({
                     "title": html.unescape(t.name) if t.name else "",
                     "artist": html.unescape(", ".join(a.name for a in t.artists)) if t.artists else "",
-                    "cover": _upgrade_cover_url(t.images[0].url) if t.images and t.images[0].url else "",
+                    "cover": cover,
                 })
             logger.info(f"Found {len(tracks)} tracks in playlist (total: {playlist.total_tracks})")
             return tracks

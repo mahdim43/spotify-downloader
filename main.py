@@ -39,7 +39,6 @@ class DownloadRequest(BaseModel):
     bitrate: str = "320"
     output_dir: str = ""
     embed_lyrics: bool = False
-    uncensored: bool = False
 
 
 SPOTIFY_URL_RE = re.compile(
@@ -81,8 +80,8 @@ async def api_download(req: DownloadRequest):
 
     output_dir = req.output_dir.strip() if req.output_dir else ""
 
-    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics, req.uncensored)
-    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics} uncensored={req.uncensored}")
+    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics)
+    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics}")
 
     asyncio.create_task(task_manager.run_job(job))
 

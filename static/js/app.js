@@ -9,15 +9,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadDirInput = document.getElementById('downloadDir');
     const lyricsToggle = document.getElementById('lyricsToggle');
     const lyricsLabel = document.getElementById('lyricsLabel');
-    const uncensoredToggle = document.getElementById('uncensoredToggle');
-    const uncensoredLabel = document.getElementById('uncensoredLabel');
     const stopBtn = document.getElementById('stopBtn');
     const resumeBtn = document.getElementById('resumeBtn');
 
     let selectedBitrate = '320';
     let selectedDir = '';
     let embedLyrics = true;
-    let uncensored = false;
     let currentSource = null;
     let currentJobId = null;
 
@@ -40,14 +37,6 @@ document.addEventListener('DOMContentLoaded', () => {
             embedLyrics = lyricsToggle.checked;
             lyricsLabel.textContent = embedLyrics ? 'ON' : 'OFF';
             lyricsLabel.style.color = embedLyrics ? 'var(--accent)' : 'var(--text-muted)';
-        });
-    }
-
-    if (uncensoredToggle) {
-        uncensoredToggle.addEventListener('change', () => {
-            uncensored = uncensoredToggle.checked;
-            uncensoredLabel.textContent = uncensored ? 'ON' : 'OFF';
-            uncensoredLabel.style.color = uncensored ? 'var(--accent)' : 'var(--text-muted)';
         });
     }
 
@@ -139,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const outputDir = downloadDirInput.value.trim() || selectedDir;
-            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics, uncensored);
+            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics);
             currentJobId = result.job_id;
             UI.setStatus('Job queued, downloading...');
 

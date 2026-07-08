@@ -9,13 +9,12 @@ logger = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, uncensored: bool = False):
+    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False):
         self.id = str(uuid.uuid4())
         self.url = url
         self.bitrate = bitrate
         self.output_dir = output_dir
         self.embed_lyrics = embed_lyrics
-        self.uncensored = uncensored
         self.status = "queued"
         self.total = 0
         self.completed = 0
@@ -52,7 +51,6 @@ class Job:
                 "bitrate": self.bitrate,
                 "output_dir": self.output_dir,
                 "embed_lyrics": self.embed_lyrics,
-                "uncensored": self.uncensored,
                 "start_index": self.completed + len(self.skipped_files),
                 "files": self.files,
                 "skipped_files": self.skipped_files,
@@ -127,8 +125,8 @@ class TaskManager:
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
-    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, uncensored: bool = False) -> Job:
-        job = Job(url, bitrate, output_dir, embed_lyrics, uncensored)
+    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False) -> Job:
+        job = Job(url, bitrate, output_dir, embed_lyrics)
         self.jobs[job.id] = job
         return job
 
@@ -157,7 +155,6 @@ class TaskManager:
                     output_dir=output_dir,
                     bitrate=job.bitrate,
                     embed_lyrics=job.embed_lyrics,
-                    uncensored=job.uncensored,
                     stop_event=job.stop_event,
                     start_index=job.start_index,
                     on_progress=lambda cur, total, track: self._on_progress(job, cur, total, track),
