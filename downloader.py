@@ -275,6 +275,52 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics
         logger.warning(f"Failed to embed metadata: {e}")
 
 
+def _normalize_for_match(text: str) -> str:
+    """Normalize for fuzzy matching: lowercase, strip punctuation, collapse whitespace."""
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Path | None:
+    """Find a matching mp3 file for a track in a folder.
+
+    Checks ID3 tags first (exact normalize match), then falls back to fuzzy filename matching.
+    Returns the Path of the matching file, or None.
+    """
+    track_norm = _normalize_for_match(f"{track_artist} {track_name}")
+    name_norm = _normalize_for_match(track_name)
+    artist_norm = _normalize_for_match(track_artist)
+    stop_words = {"the", "a", "an", "in", "on", "at", "to", "for", "of", "and", "or", "is", "feat", "ft"}
+
+    name_keywords = {w for w in name_norm.split() if w not in stop_words}
+    artist_keywords = {w for w in artist_norm.split() if w not in stop_words}
+
+    for f in folder.iterdir():
+        if f.suffix.lower() != ".mp3" or not f.is_file():
+            continue
+
+        try:
+            tags = ID3(f)
+            t = str(tags.get("TIT2", ""))
+            a = str(tags.get("TPE1", ""))
+            if t and a and _normalize_for_match(f"{a} {t}") == track_norm:
+                return f
+        except Exception:
+            pass
+
+        stem_norm = _normalize_for_match(f.stem)
+        stem_words = set(stem_norm.split())
+
+        if artist_keywords and artist_keywords.issubset(stem_words):
+            return f
+        if name_keywords and len(name_keywords & stem_words) >= len(name_keywords) * 0.6:
+            return f
+
+    return None
+
+
 def _sanitize_filename(name: str) -> str:
     """Remove characters unsafe for filenames on Windows."""
     return re.sub(r'[<>:"/\\|?*]', '_', name).strip('. ')
@@ -543,6 +589,16 @@ async def _download_playlist(
         logger.info(f"Downloading [{i}/{total}]: {track_name} - {track_artist}")
         if on_progress:
             on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
+
+        existing = _find_existing_track(track_name, track_artist, playlist_dir)
+        if existing:
+            logger.info(f"Skipping (already exists): {track_name} - {track_artist}")
+            downloaded_files.append(existing.name)
+            if on_file:
+                on_file("(exists) " + existing.name)
+            if on_progress:
+                on_progress(i, total, f"Skipped (exists): {track_artist} - {track_name}" if track_artist else f"Skipped (exists): {track_name}")
+            continue
 
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{search_query}")
