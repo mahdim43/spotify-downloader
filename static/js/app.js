@@ -37,21 +37,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    browseBtn.addEventListener('click', async () => {
-        if (window.showDirectoryPicker) {
-            try {
-                const dirHandle = await window.showDirectoryPicker();
-                selectedDir = dirHandle.name;
-                downloadDirInput.value = dirHandle.name;
-                UI.toast(`Output: ${dirHandle.name}`, 'info');
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    UI.toast('Directory picker failed', 'error');
-                }
-            }
-        } else {
-            UI.toast('Directory picker not supported in this browser. Type the path manually.', 'error');
-        }
+    downloadDirInput.addEventListener('input', () => {
+        selectedDir = downloadDirInput.value.trim();
+    });
+
+    browseBtn.addEventListener('click', () => {
+        UI.toast('Type the full path manually — browsers cannot access real paths for security.', 'info');
     });
 
     resetDirBtn.addEventListener('click', () => {
@@ -93,7 +84,8 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.hideTrackInfo();
 
         try {
-            const result = await API.download(url, selectedBitrate, selectedDir, embedLyrics);
+            const outputDir = downloadDirInput.value.trim() || selectedDir;
+            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics);
             UI.setStatus('Job queued, downloading...');
 
             currentSource = API.connectProgress(result.job_id, {
