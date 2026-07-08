@@ -634,8 +634,14 @@ async def _download_playlist(
             on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
 
         existing = _find_existing_track(track_name, track_artist, playlist_dir)
-        if not existing and playlist_dir.parent != playlist_dir:
-            existing = _find_existing_track(track_name, track_artist, playlist_dir.parent)
+        if not existing and output_dir != playlist_dir:
+            existing = _find_existing_track(track_name, track_artist, output_dir)
+        if not existing:
+            for sub in output_dir.iterdir():
+                if sub.is_dir() and sub != playlist_dir:
+                    existing = _find_existing_track(track_name, track_artist, sub)
+                    if existing:
+                        break
         if existing:
             logger.info(f"Skipping (already exists): {_safe(track_name)} - {_safe(track_artist)}")
             downloaded_files.append(existing.name)
