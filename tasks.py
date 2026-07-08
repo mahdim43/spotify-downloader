@@ -20,6 +20,7 @@ class Job:
         self.completed = 0
         self.failed = 0
         self.files: list[str] = []
+        self.skipped_files: list[str] = []
         self.failed_tracks: list[dict] = []
         self.errors: list[str] = []
         self.current_track = ""
@@ -111,17 +112,20 @@ class TaskManager:
                 )
 
                 job.files = result.get("files", [])
+                job.skipped_files = result.get("skipped", [])
                 job.failed_tracks = result.get("failed", [])
                 job.status = "completed"
                 job.broadcast("complete", {
                     "status": "completed",
                     "files": job.files,
+                    "skipped_files": job.skipped_files,
                     "failed_tracks": job.failed_tracks,
                     "total": job.total,
-                    "success": job.completed,
+                    "downloaded": len(job.files),
+                    "skipped": len(job.skipped_files),
                     "failed": job.failed,
                 })
-                logger.info(f"Job {job.id} completed: {job.completed} ok, {job.failed} failed")
+                logger.info(f"Job {job.id} completed: {len(job.files)} downloaded, {len(job.skipped_files)} skipped, {job.failed} failed")
 
             except Exception as e:
                 logger.error(f"Job {job.id} failed: {e}", exc_info=True)

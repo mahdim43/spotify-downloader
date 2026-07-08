@@ -616,6 +616,7 @@ async def _download_playlist(
         return []
 
     downloaded_files = []
+    skipped_files = []
     failed_tracks = []
 
     def _safe(text: str) -> str:
@@ -646,7 +647,7 @@ async def _download_playlist(
                         break
         if existing:
             logger.info(f"Skipping (already exists): {_safe(track_name)} - {_safe(track_artist)}")
-            downloaded_files.append(existing.name)
+            skipped_files.append(existing.name)
             if on_file:
                 on_file("(exists) " + existing.name)
             if on_progress:
@@ -735,7 +736,7 @@ async def _download_playlist(
     if on_progress:
         on_progress(total, total, "Done")
 
-    return {"files": downloaded_files, "failed": failed_tracks}
+    return {"files": downloaded_files, "skipped": skipped_files, "failed": failed_tracks}
 
 
 def _extract_track_ids(html_text: str) -> list[str]:

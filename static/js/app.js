@@ -144,13 +144,13 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.setProgressBarState('done');
         UI.hideTrackInfo();
 
-        const count = data.files?.length || 0;
+        const downloadedCount = data.downloaded || data.files?.length || 0;
+        const skippedCount = data.skipped || data.skipped_files?.length || 0;
         const failedCount = data.failed_tracks?.length || 0;
-        const skippedCount = (data.files || []).filter(f => f.startsWith('(exists)')).length;
-        const downloadedCount = count - skippedCount;
         UI.setDetail(`${downloadedCount} downloaded, ${skippedCount} skipped, ${failedCount} failed`);
 
-        UI.showResults(data.files || [], data.failed_tracks || []);
+        const allFiles = (data.files || []).concat((data.skipped_files || []).map(f => '(exists) ' + f));
+        UI.showResults(allFiles, data.failed_tracks || []);
 
         if (failedCount > 0) {
             UI.toast(`${failedCount} track(s) failed to download`, 'error');
