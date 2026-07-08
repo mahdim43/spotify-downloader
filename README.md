@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="screenshot.png" alt="SPOTDOWN Screenshot" width="100%">
-</p>
+
 
 <h1 align="center">[ SPOTDOWN ]</h1>
 
