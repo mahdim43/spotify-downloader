@@ -596,6 +596,9 @@ async def _download_playlist(
     playlist_dir = output_dir / album_title if album_title else output_dir
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
+    logger.info(f"Download folder: {playlist_dir}")
+    logger.info(f"Output dir: {output_dir}, album_title: {album_title!r}")
+
     logger.info(f"Fetching playlist tracks from: {url}")
 
     html_tracks = await _fetch_all_playlist_tracks(url)
@@ -631,6 +634,8 @@ async def _download_playlist(
             on_progress(i - 1, total, f"{track_artist} - {track_name}" if track_artist else track_name)
 
         existing = _find_existing_track(track_name, track_artist, playlist_dir)
+        if not existing and playlist_dir.parent != playlist_dir:
+            existing = _find_existing_track(track_name, track_artist, playlist_dir.parent)
         if existing:
             logger.info(f"Skipping (already exists): {_safe(track_name)} - {_safe(track_artist)}")
             downloaded_files.append(existing.name)
@@ -639,6 +644,8 @@ async def _download_playlist(
             if on_progress:
                 on_progress(i, total, f"Skipped (exists): {track_artist} - {track_name}" if track_artist else f"Skipped (exists): {track_name}")
             continue
+        else:
+            logger.info(f"Not found, will download: {_safe(track_name)} - {_safe(track_artist)}")
 
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{_safe(search_query)}")
