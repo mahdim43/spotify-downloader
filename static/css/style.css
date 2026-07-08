@@ -572,6 +572,69 @@ body {
     text-overflow: ellipsis;
 }
 
+.control-buttons {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.control-btn {
+    flex: 1;
+    padding: 0.75rem 1rem;
+    border: none;
+    border-radius: 10px;
+    font-family: var(--font-display);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    position: relative;
+    overflow: hidden;
+}
+
+.control-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.2) 50%, transparent 70%);
+    transform: translateX(-100%);
+    transition: transform 0.5s;
+}
+
+.control-btn:hover::before {
+    transform: translateX(100%);
+}
+
+.control-btn:hover {
+    transform: scale(1.03);
+}
+
+.control-btn:active {
+    transform: scale(0.98);
+}
+
+.stop-btn {
+    background: var(--error);
+    color: #fff;
+    box-shadow: 0 0 20px var(--error-glow);
+}
+
+.stop-btn:hover {
+    box-shadow: 0 0 30px var(--error-glow), 0 0 60px var(--error-glow);
+}
+
+.resume-btn {
+    background: var(--accent);
+    color: #000;
+    box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.resume-btn:hover {
+    box-shadow: 0 0 30px var(--accent-glow-strong), 0 0 60px var(--accent-glow);
+}
+
 /* ── FILES ── */
 .files-card {
     animation: slideIn 0.4s ease-out;

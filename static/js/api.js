@@ -1,12 +1,26 @@
 const API = {
-    async download(url, bitrate, outputDir, embedLyrics) {
+    async download(url, bitrate, outputDir, embedLyrics, uncensored) {
         const resp = await fetch('/api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, bitrate, output_dir: outputDir || '', embed_lyrics: embedLyrics || false }),
+            body: JSON.stringify({ url, bitrate, output_dir: outputDir || '', embed_lyrics: embedLyrics || false, uncensored: uncensored || false }),
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || 'Download request failed');
+        return data;
+    },
+
+    async stopJob(jobId) {
+        const resp = await fetch(`/api/stop/${jobId}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Stop request failed');
+        return data;
+    },
+
+    async resumeJob(jobId) {
+        const resp = await fetch(`/api/resume/${jobId}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Resume request failed');
         return data;
     },
 
@@ -38,6 +52,14 @@ const API = {
             try {
                 const data = JSON.parse(e.data);
                 callbacks.onComplete?.(data);
+            } catch {}
+            source.close();
+        });
+
+        source.addEventListener('stopped', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                callbacks.onStopped?.(data);
             } catch {}
             source.close();
         });

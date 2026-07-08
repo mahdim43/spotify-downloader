@@ -9,11 +9,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadDirInput = document.getElementById('downloadDir');
     const lyricsToggle = document.getElementById('lyricsToggle');
     const lyricsLabel = document.getElementById('lyricsLabel');
+    const uncensoredToggle = document.getElementById('uncensoredToggle');
+    const uncensoredLabel = document.getElementById('uncensoredLabel');
+    const stopBtn = document.getElementById('stopBtn');
+    const resumeBtn = document.getElementById('resumeBtn');
 
     let selectedBitrate = '320';
     let selectedDir = '';
     let embedLyrics = true;
+    let uncensored = false;
     let currentSource = null;
+    let currentJobId = null;
 
     // Init lyrics label
     if (lyricsLabel) {
@@ -37,18 +43,62 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    if (uncensoredToggle) {
+        uncensoredToggle.addEventListener('change', () => {
+            uncensored = uncensoredToggle.checked;
+            uncensoredLabel.textContent = uncensored ? 'ON' : 'OFF';
+            uncensoredLabel.style.color = uncensored ? 'var(--accent)' : 'var(--text-muted)';
+        });
+    }
+
     downloadDirInput.addEventListener('input', () => {
         selectedDir = downloadDirInput.value.trim();
     });
 
-    browseBtn.addEventListener('click', () => {
-        UI.toast('Type the full path manually — browsers cannot access real paths for security.', 'info');
+    browseBtn.addEventListener('click', async () => {
+        try {
+            const resp = await fetch('/api/browse-folder');
+            const data = await resp.json();
+            if (data.path) {
+                downloadDirInput.value = data.path;
+                selectedDir = data.path;
+                UI.toast('Folder selected: ' + data.path, 'success');
+            } else if (data.error) {
+                UI.toast(data.error, 'error');
+            }
+        } catch (err) {
+            UI.toast('Failed to open folder picker', 'error');
+        }
     });
 
     resetDirBtn.addEventListener('click', () => {
         selectedDir = '';
         downloadDirInput.value = '';
         UI.toast('Output reset to default', 'info');
+    });
+
+    stopBtn.addEventListener('click', async () => {
+        if (currentJobId) {
+            try {
+                await API.stopJob(currentJobId);
+                UI.toast('Stopping download...', 'info');
+            } catch (err) {
+                UI.toast('Failed to stop: ' + err.message, 'error');
+            }
+        }
+    });
+
+    resumeBtn.addEventListener('click', async () => {
+        if (currentJobId) {
+            try {
+                await API.resumeJob(currentJobId);
+                UI.toast('Resuming download...', 'info');
+                resumeBtn.classList.add('hidden');
+                stopBtn.classList.remove('hidden');
+            } catch (err) {
+                UI.toast('Failed to resume: ' + err.message, 'error');
+            }
+        }
     });
 
     goBtn.addEventListener('click', startDownload);
@@ -83,9 +133,14 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.setProgressBarState('');
         UI.hideTrackInfo();
 
+        // Show stop button, hide resume button
+        stopBtn.classList.remove('hidden');
+        resumeBtn.classList.add('hidden');
+
         try {
             const outputDir = downloadDirInput.value.trim() || selectedDir;
-            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics);
+            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics, uncensored);
+            currentJobId = result.job_id;
             UI.setStatus('Job queued, downloading...');
 
             currentSource = API.connectProgress(result.job_id, {
@@ -100,6 +155,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 onComplete(data) {
                     handleComplete(data);
+                },
+                onStopped(data) {
+                    handleStopped(data);
                 },
                 onError(data) {
                     handleError(data.error || 'Unknown error');
@@ -159,6 +217,21 @@ document.addEventListener('DOMContentLoaded', () => {
         resetButton();
     }
 
+    function handleStopped(data) {
+        UI.setStatus('Download stopped');
+        UI.setStatusDot('error');
+        UI.setProgressBarState('error');
+        UI.setDetail(`Stopped at ${data.current || 0}/${data.total || 0}`);
+        UI.toast('Download stopped. Click Resume to continue.', 'info');
+
+        stopBtn.classList.add('hidden');
+        resumeBtn.classList.remove('hidden');
+        if (currentSource) {
+            currentSource.close();
+            currentSource = null;
+        }
+    }
+
     function handleError(message) {
         UI.setStatus(`Error: ${message}`);
         UI.setStatusDot('error');
@@ -176,5 +249,9 @@ document.addEventListener('DOMContentLoaded', () => {
             currentSource.close();
             currentSource = null;
         }
+        // Hide stop/resume buttons on completion or error
+        stopBtn.classList.add('hidden');
+        resumeBtn.classList.add('hidden');
+        currentJobId = null;
     }
 });

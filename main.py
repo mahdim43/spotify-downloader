@@ -39,6 +39,7 @@ class DownloadRequest(BaseModel):
     bitrate: str = "320"
     output_dir: str = ""
     embed_lyrics: bool = False
+    uncensored: bool = False
 
 
 SPOTIFY_URL_RE = re.compile(
@@ -80,8 +81,8 @@ async def api_download(req: DownloadRequest):
 
     output_dir = req.output_dir.strip() if req.output_dir else ""
 
-    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics)
-    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics}")
+    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics, req.uncensored)
+    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics} uncensored={req.uncensored}")
 
     asyncio.create_task(task_manager.run_job(job))
 
@@ -95,6 +96,39 @@ async def api_download(req: DownloadRequest):
         "platform": "spotify",
         "is_playlist": is_playlist,
     }
+
+
+@app.post("/api/stop/{job_id}")
+async def stop_job(job_id: str):
+    """Stop a running download job."""
+    job = task_manager.get_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    
+    if job.status != "processing":
+        return JSONResponse(status_code=400, content={"error": "Job is not processing"})
+    
+    job.stop_event.set()
+    return {"status": "stopping", "job_id": job_id}
+
+
+@app.post("/api/resume/{job_id}")
+async def resume_job(job_id: str):
+    """Resume a stopped download job."""
+    job = task_manager.get_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+    
+    if job.status != "stopped":
+        return JSONResponse(status_code=400, content={"error": "Job is not stopped"})
+    
+    # Load progress and restart
+    job.load_progress()
+    job.status = "queued"
+    job.stop_event.clear()
+    asyncio.create_task(task_manager.run_job(job))
+    
+    return {"status": "resumed", "job_id": job_id, "start_index": job.start_index}
 
 
 @app.get("/api/progress/{job_id}")
@@ -159,6 +193,28 @@ async def api_list_files():
             "url": f"/files/{rel.as_posix()}",
         })
     return {"files": files}
+
+
+@app.get("/api/browse-folder")
+async def browse_folder():
+    """Open OS folder picker dialog and return selected path."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder = filedialog.askdirectory(title="Select Download Folder")
+        root.destroy()
+        
+        if folder:
+            return {"path": folder}
+        return {"path": ""}
+    except ImportError:
+        return JSONResponse(status_code=500, content={"error": "tkinter not available"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 
 @app.get("/api/health")

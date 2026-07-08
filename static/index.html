@@ -78,6 +78,15 @@
                     </label>
                     <span class="toggle-label" id="lyricsLabel">OFF</span>
                 </div>
+
+                <div class="lyrics-toggle-group">
+                    <label class="input-label">UNCENSORED</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="uncensoredToggle">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="toggle-label" id="uncensoredLabel">OFF</span>
+                </div>
             </div>
 
             <div id="progressSection" class="glass-card progress-card hidden">
@@ -100,6 +109,11 @@
                 <div class="track-info hidden" id="trackInfo">
                     <span class="track-label">NOW:</span>
                     <span class="track-name" id="trackName"></span>
+                </div>
+
+                <div class="control-buttons">
+                    <button id="stopBtn" class="control-btn stop-btn hidden">STOP</button>
+                    <button id="resumeBtn" class="control-btn resume-btn hidden">RESUME</button>
                 </div>
             </div>
 
@@ -129,8 +143,8 @@
         </footer>
     </div>
 
-    <script src="/static/js/api.js"></script>
+    <script src="/static/js/api.js?v=3"></script>
     <script src="/static/js/ui.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v=3"></script>
 </body>
 </html>

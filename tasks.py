@@ -9,12 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False):
+    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, uncensored: bool = False):
         self.id = str(uuid.uuid4())
         self.url = url
         self.bitrate = bitrate
         self.output_dir = output_dir
         self.embed_lyrics = embed_lyrics
+        self.uncensored = uncensored
         self.status = "queued"
         self.total = 0
         self.completed = 0
@@ -25,6 +26,9 @@ class Job:
         self.errors: list[str] = []
         self.current_track = ""
         self.subscribers: list[asyncio.Queue] = []
+        self.stop_event = asyncio.Event()
+        self.start_index = 0
+        self.progress_file = Path(f".job_progress_{self.id}.json")
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +43,48 @@ class Job:
             "current_track": self.current_track,
             "bitrate": self.bitrate,
         }
+
+    def save_progress(self):
+        """Save current progress to file for resume."""
+        try:
+            data = {
+                "url": self.url,
+                "bitrate": self.bitrate,
+                "output_dir": self.output_dir,
+                "embed_lyrics": self.embed_lyrics,
+                "uncensored": self.uncensored,
+                "start_index": self.completed + len(self.skipped_files),
+                "files": self.files,
+                "skipped_files": self.skipped_files,
+                "failed_tracks": self.failed_tracks,
+            }
+            self.progress_file.write_text(json.dumps(data))
+            logger.info(f"Job {self.id}: Progress saved at index {data['start_index']}")
+        except Exception as e:
+            logger.error(f"Job {self.id}: Failed to save progress: {e}")
+
+    def load_progress(self) -> bool:
+        """Load progress from file. Returns True if progress was loaded."""
+        try:
+            if self.progress_file.exists():
+                data = json.loads(self.progress_file.read_text())
+                self.start_index = data.get("start_index", 0)
+                self.files = data.get("files", [])
+                self.skipped_files = data.get("skipped_files", [])
+                self.failed_tracks = data.get("failed_tracks", [])
+                logger.info(f"Job {self.id}: Loaded progress from index {self.start_index}")
+                return True
+        except Exception as e:
+            logger.error(f"Job {self.id}: Failed to load progress: {e}")
+        return False
+
+    def cleanup_progress(self):
+        """Remove progress file after completion."""
+        try:
+            if self.progress_file.exists():
+                self.progress_file.unlink()
+        except Exception:
+            pass
 
     def broadcast(self, event: str, data: dict):
         payload = f"event: {event}\ndata: {json.dumps(data)}\n\n"
@@ -81,14 +127,15 @@ class TaskManager:
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
-    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False) -> Job:
-        job = Job(url, bitrate, output_dir, embed_lyrics)
+    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, uncensored: bool = False) -> Job:
+        job = Job(url, bitrate, output_dir, embed_lyrics, uncensored)
         self.jobs[job.id] = job
         return job
 
     async def run_job(self, job: Job):
         async with self.semaphore:
             job.status = "processing"
+            job.stop_event.clear()
             job.broadcast("status", {"status": "processing"})
 
             if job.output_dir:
@@ -98,6 +145,10 @@ class TaskManager:
 
             output_dir.mkdir(parents=True, exist_ok=True)
 
+            # Load progress if resuming
+            if job.start_index > 0:
+                job.load_progress()
+
             try:
                 from downloader import download_spotify
 
@@ -106,15 +157,31 @@ class TaskManager:
                     output_dir=output_dir,
                     bitrate=job.bitrate,
                     embed_lyrics=job.embed_lyrics,
+                    uncensored=job.uncensored,
+                    stop_event=job.stop_event,
+                    start_index=job.start_index,
                     on_progress=lambda cur, total, track: self._on_progress(job, cur, total, track),
                     on_file=lambda name: self._on_file(job, name),
                     on_error=lambda msg: self._on_error(job, msg),
                 )
 
+                # Check if stopped
+                if job.stop_event.is_set():
+                    job.status = "stopped"
+                    job.save_progress()
+                    job.broadcast("stopped", {
+                        "status": "stopped",
+                        "current": job.completed,
+                        "total": job.total,
+                    })
+                    logger.info(f"Job {job.id} stopped at index {job.completed}")
+                    return
+
                 job.files = result.get("files", [])
                 job.skipped_files = result.get("skipped", [])
                 job.failed_tracks = result.get("failed", [])
                 job.status = "completed"
+                job.cleanup_progress()
                 job.broadcast("complete", {
                     "status": "completed",
                     "files": job.files,

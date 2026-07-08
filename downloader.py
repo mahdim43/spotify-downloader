@@ -153,17 +153,18 @@ def download_cover_image(url: str) -> bytes | None:
 
 LRCLIB_API = "https://lrclib.net/api"
 LYRICS_OVH_API = "https://api.lyrics.ovh/v1"
+LYRICS_FANDOM_API = "https://lyrics.fandom.com/api.php"
 
 
 def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
-    """Fetch lyrics from lrclib.net (synced + plain) with lyrics.ovh fallback (plain only).
+    """Fetch lyrics from multiple sources: lrclib.net, lyrics.ovh, lyrics.fandom.com.
     Returns dict with 'plain' and/or 'synced' (LRC) lyrics.
     """
     try:
         params = {"artist_name": artist, "track_name": title}
         if duration > 0:
             params["duration"] = duration
-        resp = requests.get(f"{LRCLIB_API}/get", params=params, timeout=30)
+        resp = requests.get(f"{LRCLIB_API}/get", params=params, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             result = {}
@@ -175,7 +176,7 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
                 logger.info(f"Lyrics found (lrclib) for: {artist} - {title}")
                 return result
 
-        resp2 = requests.get(f"{LRCLIB_API}/search", params=params, timeout=30)
+        resp2 = requests.get(f"{LRCLIB_API}/search", params=params, timeout=5)
         if resp2.status_code == 200:
             results = resp2.json()
             if results:
@@ -194,7 +195,7 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
     try:
         safe_artist = requests.utils.quote(artist)
         safe_title = requests.utils.quote(title)
-        resp = requests.get(f"{LYRICS_OVH_API}/{safe_artist}/{safe_title}", timeout=30)
+        resp = requests.get(f"{LYRICS_OVH_API}/{safe_artist}/{safe_title}", timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             lyrics_text = data.get("lyrics", "")
@@ -203,6 +204,42 @@ def fetch_lyrics(artist: str, title: str, duration: int = 0) -> dict | None:
                 return {"plain": lyrics_text}
     except Exception as e:
         logger.warning(f"lyrics.ovh fetch failed: {e}")
+
+    try:
+        params = {
+            "action": "query",
+            "titles": f"{title} by {artist}",
+            "prop": "revisions",
+            "rvprop": "content",
+            "format": "json",
+        }
+        resp = requests.get(LYRICS_FANDOM_API, params=params, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            pages = data.get("query", {}).get("pages", {})
+            for page_id, page_data in pages.items():
+                if page_id == "-1":
+                    continue
+                revisions = page_data.get("revisions", [])
+                if revisions:
+                    content = revisions[0].get("*", "")
+                    lyrics_lines = []
+                    in_lyrics = False
+                    for line in content.split("\n"):
+                        if "<lyrics>" in line.lower():
+                            in_lyrics = True
+                            continue
+                        if "</lyrics>" in line.lower():
+                            in_lyrics = False
+                            continue
+                        if in_lyrics and line.strip() and not line.startswith("[") and not line.startswith("{"):
+                            lyrics_lines.append(line.strip())
+                    if lyrics_lines:
+                        lyrics_text = "\n".join(lyrics_lines)
+                        logger.info(f"Lyrics found (fandom) for: {artist} - {title}")
+                        return {"plain": lyrics_text}
+    except Exception as e:
+        logger.warning(f"lyrics.fandom fetch failed: {e}")
 
     logger.info(f"No lyrics found for: {artist} - {title}")
     return None
@@ -314,7 +351,7 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
         base = re.sub(r'\s*[\(\[].*?[\)\]]', '', stem_norm).strip()
         if " - " in base:
             parts = base.split(" - ", 1)
-            return set(parts[0].split()), set(parts[1].split())
+            return set(parts[1].split()), set(parts[0].split())
         return None, set(base.split())
 
     def _title_matches(file_title_words: set) -> bool:
@@ -347,13 +384,16 @@ def _find_existing_track(track_name: str, track_artist: str, folder: Path) -> Pa
         file_artist, file_title = _parse_artist_title(stem_norm)
 
         if file_artist is not None:
-            artist_ok = (artist_keywords and artist_keywords.issubset(file_artist)) or \
-                        (artist_keywords and len(artist_keywords & file_artist) >= len(file_artist) * 0.8 and file_artist)
-            if artist_ok and _title_matches(file_title):
-                logger.info(f"Skip check: filename match: {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
-                return f
+            if artist_keywords and artist_keywords == file_artist:
+                if _title_matches(file_title):
+                    logger.info(f"Skip check: filename match: {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
+                    return f
+            elif artist_keywords and file_artist and artist_keywords.issubset(file_artist):
+                if _title_matches(file_title):
+                    logger.info(f"Skip check: filename match (subset): {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
+                    return f
         else:
-            if artist_keywords and artist_keywords.issubset(file_title) and _title_matches(file_title):
+            if artist_keywords and artist_keywords == file_title and _title_matches(file_title):
                 logger.info(f"Skip check: filename match (no artist): {_safe_log(f.name)} for {_safe_log(track_artist)} - {_safe_log(track_name)}")
                 return f
 
@@ -386,7 +426,7 @@ def _clean_yt_filename(name: str) -> str:
     return cleaned.strip()
 
 
-def _build_search_query(title: str, artist: str) -> str:
+def _build_search_query(title: str, artist: str, uncensored: bool = False) -> str:
     """Build accurate YouTube search query from full title and artist, preferring audio-only."""
     parts = []
     if artist:
@@ -397,9 +437,16 @@ def _build_search_query(title: str, artist: str) -> str:
         clean_title = re.sub(r'\s*-\s*Spotify.*', '', title).strip()
         clean_title = re.sub(r'\s*\(feat\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
         clean_title = re.sub(r'\s*\(ft\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
+        clean_title = re.sub(r'[,!;:?]', '', clean_title).strip()
+        clean_title = re.sub(r'[^\x00-\x7F]+', '', clean_title).strip()
+        clean_title = re.sub(r'\(\s*\)', '', clean_title).strip()
+        clean_title = re.sub(r'\s{2,}', ' ', clean_title).strip()
         parts.append(clean_title)
 
-    return " ".join(parts) + " official audio"
+    query = " ".join(parts) + " official audio"
+    if uncensored:
+        query += " uncensored"
+    return query
 
 
 def _parse_title_artist(raw_title: str) -> tuple[str, str]:
@@ -423,6 +470,9 @@ async def download_spotify(
     output_dir: Path,
     bitrate: str = "320",
     embed_lyrics: bool = False,
+    uncensored: bool = False,
+    stop_event: asyncio.Event | None = None,
+    start_index: int = 0,
     on_progress: Callable[[int, int, str], None] | None = None,
     on_file: Callable[[str], None] | None = None,
     on_error: Callable[[str], None] | None = None,
@@ -439,7 +489,7 @@ async def download_spotify(
     if is_playlist_url:
         return await _download_playlist(
             url, output_dir, bitrate, metadata, page_info,
-            embed_lyrics, on_progress, on_file, on_error
+            embed_lyrics, uncensored, stop_event, start_index, on_progress, on_file, on_error
         )
     else:
         return await _download_single(
@@ -509,6 +559,8 @@ async def _download_single(
     if on_progress:
         on_progress(0, 1, f"Downloading: {search_query}")
 
+    before_download = {f.name for f in output_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
+
     result = await asyncio.to_thread(
         subprocess.run,
         args,
@@ -526,50 +578,53 @@ async def _download_single(
     downloaded_files = []
     failed_tracks = []
 
-    for f in output_dir.iterdir():
-        if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-            safe_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
-            safe_title = _sanitize_filename(clean_title) if clean_title else _clean_yt_filename(f.stem)
-            new_name = f"{safe_artist} - {safe_title}.mp3"
-            if new_name != f.name:
-                new_path = f.parent / new_name
-                if not new_path.exists():
-                    f.rename(new_path)
-                    f = new_path
-                else:
-                    f.unlink()
-                    f = new_path
+    after_download = {f.name for f in output_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
+    new_files = after_download - before_download
 
-            downloaded_files.append(f.name)
+    for fname in new_files:
+        f = output_dir / fname
+        safe_artist = _sanitize_filename(artist) if artist else "Unknown Artist"
+        safe_title = _sanitize_filename(clean_title) if clean_title else _clean_yt_filename(f.stem)
+        new_name = f"{safe_title} - {safe_artist}.mp3"
+        if new_name != f.name:
+            new_path = f.parent / new_name
+            if not new_path.exists():
+                f.rename(new_path)
+                f = new_path
+            else:
+                f.unlink()
+                f = new_path
 
-            cover_data = None
-            thumb_url = ""
-            if page_info:
-                thumb_url = page_info.get("image", "")
-            if not thumb_url and metadata:
-                thumb_url = metadata.get("thumbnail", "")
+        downloaded_files.append(f.name)
 
-            if thumb_url:
-                cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
+        cover_data = None
+        thumb_url = ""
+        if page_info:
+            thumb_url = page_info.get("image", "")
+        if not thumb_url and metadata:
+            thumb_url = metadata.get("thumbnail", "")
 
-            track_meta = {
-                "title": clean_title,
-                "artist": artist or "Unknown Artist",
-                "album": "",
-                "track_num": "",
-            }
-            if page_info:
-                if page_info.get("album"):
-                    track_meta["album"] = page_info["album"]
+        if thumb_url:
+            cover_data = await asyncio.to_thread(download_cover_image, thumb_url)
 
-            lyrics = None
-            if embed_lyrics and artist and clean_title:
-                lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
+        track_meta = {
+            "title": clean_title,
+            "artist": artist or "Unknown Artist",
+            "album": "",
+            "track_num": "",
+        }
+        if page_info:
+            if page_info.get("album"):
+                track_meta["album"] = page_info["album"]
 
-            await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
+        lyrics = None
+        if embed_lyrics and artist and clean_title:
+            lyrics = await asyncio.to_thread(fetch_lyrics, artist, clean_title)
 
-            if on_file:
-                on_file(f.name)
+        await asyncio.to_thread(embed_metadata, f, track_meta, cover_data, lyrics)
+
+        if on_file:
+            on_file(f.name)
 
     if on_progress:
         on_progress(1, 1, "Done")
@@ -585,6 +640,9 @@ async def _download_playlist(
     metadata: dict | None,
     page_info: dict | None,
     embed_lyrics: bool,
+    uncensored: bool,
+    stop_event: asyncio.Event | None,
+    start_index: int,
     on_progress: Callable,
     on_file: Callable,
     on_error: Callable,
@@ -629,6 +687,14 @@ async def _download_playlist(
     failed_tracks = []
 
     for i, track_info in enumerate(html_tracks, 1):
+        # Check if stopped
+        if stop_event and stop_event.is_set():
+            break
+
+        # Skip tracks before start_index when resuming
+        if i <= start_index:
+            continue
+
         if isinstance(track_info, dict):
             track_name = track_info.get("title", "")
             track_artist = track_info.get("artist", "")
@@ -662,7 +728,7 @@ async def _download_playlist(
         else:
             logger.info(f"Not found, will download: {_safe_log(track_name)} - {_safe_log(track_artist)}")
 
-        search_query = _build_search_query(track_name, track_artist)
+        search_query = _build_search_query(track_name, track_artist, uncensored)
         logger.info(f"Searching YouTube for: ytsearch:{_safe_log(search_query)}")
 
         output_template = str(playlist_dir / "%(title)s.%(ext)s")
@@ -684,6 +750,8 @@ async def _download_playlist(
         ]
 
         try:
+            before_download = {f.name for f in playlist_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
+
             result = await asyncio.to_thread(
                 subprocess.run,
                 args,
@@ -692,44 +760,58 @@ async def _download_playlist(
             )
 
             if result.returncode == 0:
+                after_download = {f.name for f in playlist_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
+                new_files = after_download - before_download
+                new_mp3s = [playlist_dir / f for f in new_files if f not in downloaded_files]
+                if not new_mp3s:
+                    stderr_text = (result.stderr or b"").decode(errors="replace")
+                    if "0 results" in stderr_text:
+                        logger.warning(f"No YouTube results for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
+                    else:
+                        logger.warning(f"yt-dlp returned 0 but no file created for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
+                    failed_tracks.append({"title": track_name, "artist": track_artist, "error": "no results found"})
+                    if on_error:
+                        on_error(f"No results: {track_name}")
+                    continue
+
                 track_cover_data = None
                 if track_cover:
                     track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
 
-                for f in playlist_dir.iterdir():
-                    if f.suffix == ".mp3" and f.is_file() and f.name not in downloaded_files:
-                        safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
-                        safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(f.stem)
-                        new_name = f"{safe_artist} - {safe_title}.mp3"
-                        if new_name != f.name:
-                            new_path = f.parent / new_name
-                            if not new_path.exists():
-                                f.rename(new_path)
-                                f = new_path
-                            else:
-                                f.unlink()
-                                f = new_path
+                for f in new_mp3s:
+                    safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
+                    safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(f.stem)
+                    new_name = f"{safe_title} - {safe_artist}.mp3"
+                    if new_name != f.name:
+                        new_path = f.parent / new_name
+                        if not new_path.exists():
+                            f.rename(new_path)
+                            f = new_path
+                        else:
+                            f.unlink()
+                            f = new_path
 
-                        downloaded_files.append(f.name)
+                    downloaded_files.append(f.name)
 
-                        track_meta = {
-                            "title": track_name,
-                            "artist": track_artist or "Unknown Artist",
-                            "album": album_title,
-                            "track_num": str(i),
-                        }
+                    track_meta = {
+                        "title": track_name,
+                        "artist": track_artist or "Unknown Artist",
+                        "album": album_title,
+                        "track_num": str(i),
+                    }
 
-                        lyrics = None
-                        if embed_lyrics and track_artist and track_name:
-                            lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
+                    lyrics = None
+                    if embed_lyrics and track_artist and track_name:
+                        lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
 
-                        await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
+                    await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
 
-                        if on_file:
-                            on_file(f.name)
-                        break
+                    if on_file:
+                        on_file(f.name)
+                    break
             else:
-                logger.warning(f"Failed track {i}/{total}: {track_name}")
+                stderr_text = (result.stderr or b"").decode(errors="replace")
+                logger.warning(f"Failed track {i}/{total}: {track_name} | stderr: {stderr_text[:300]}")
                 failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed"})
                 if on_error:
                     on_error(f"Failed: {track_name}")
