@@ -601,6 +601,10 @@ async def _download_playlist(
     logger.info(f"Download folder: {playlist_dir}")
     logger.info(f"Output dir: {output_dir}, album_title: {album_title!r}")
 
+    # Count existing mp3 files for reference
+    existing_count = sum(1 for _ in output_dir.rglob("*.mp3"))
+    logger.info(f"Existing mp3 files in output_dir (recursive): {existing_count}")
+
     logger.info(f"Fetching playlist tracks from: {url}")
 
     html_tracks = await _fetch_all_playlist_tracks(url)
