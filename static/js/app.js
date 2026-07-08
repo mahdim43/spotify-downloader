@@ -11,12 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const lyricsLabel = document.getElementById('lyricsLabel');
     const stopBtn = document.getElementById('stopBtn');
     const resumeBtn = document.getElementById('resumeBtn');
+    const retryAllBtn = document.getElementById('retryAllBtn');
 
     let selectedBitrate = '320';
     let selectedDir = '';
     let embedLyrics = true;
     let currentSource = null;
     let currentJobId = null;
+    let isAlbum = false;
 
     // Init lyrics label
     if (lyricsLabel) {
@@ -90,6 +92,113 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Retry all failed tracks
+    if (retryAllBtn) {
+        retryAllBtn.addEventListener('click', async () => {
+            if (!currentJobId) return;
+            const failedTracks = UI.getFailedTracks();
+            if (failedTracks.length === 0) return;
+
+            retryAllBtn.disabled = true;
+            retryAllBtn.textContent = 'RETRYING...';
+
+            try {
+                UI.showSection('progressSection');
+                UI.setStatus('Retrying failed tracks...');
+                UI.setDetail('');
+                UI.setProgress(0);
+                UI.setPercent('0%');
+                UI.setStatusDot('');
+                UI.setProgressBarState('');
+
+                const result = await API.retryFailed(currentJobId, failedTracks, isAlbum);
+                currentJobId = result.job_id;
+
+                currentSource = API.connectProgress(result.job_id, {
+                    onStatus(data) {
+                        UI.setStatus(data.status || 'Retrying...');
+                    },
+                    onProgress(data) {
+                        handleProgress(data);
+                    },
+                    onFile(data) {
+                        handleFile(data);
+                    },
+                    onRetryComplete(data) {
+                        handleRetryComplete(data);
+                    },
+                    onStopped(data) {
+                        handleRetryComplete(data);
+                    },
+                    onError(data) {
+                        handleRetryComplete(data);
+                    },
+                });
+            } catch (err) {
+                UI.toast('Retry failed: ' + err.message, 'error');
+                retryAllBtn.disabled = false;
+                retryAllBtn.textContent = 'RETRY ALL FAILED';
+            }
+        });
+    }
+
+    // Individual retry button delegation
+    document.addEventListener('click', (e) => {
+        const retryBtn = e.target.closest('.retry-btn');
+        if (!retryBtn || !currentJobId) return;
+
+        const item = retryBtn.closest('.result-failed');
+        if (!item) return;
+
+        let track;
+        try {
+            track = JSON.parse(item.dataset.track);
+        } catch { return; }
+
+        retryBtn.disabled = true;
+        retryBtn.textContent = '...';
+
+        (async () => {
+            try {
+                UI.showSection('progressSection');
+                UI.setStatus(`Retrying: ${track.artist || ''} - ${track.title}`);
+                UI.setDetail('');
+                UI.setProgress(0);
+                UI.setPercent('0%');
+                UI.setStatusDot('');
+                UI.setProgressBarState('');
+
+                const result = await API.retryFailed(currentJobId, [track], isAlbum);
+                currentJobId = result.job_id;
+
+                currentSource = API.connectProgress(result.job_id, {
+                    onStatus(data) {
+                        UI.setStatus(data.status || 'Retrying...');
+                    },
+                    onProgress(data) {
+                        handleProgress(data);
+                    },
+                    onFile(data) {
+                        handleFile(data);
+                    },
+                    onRetryComplete(data) {
+                        handleRetryComplete(data);
+                    },
+                    onStopped(data) {
+                        handleRetryComplete(data);
+                    },
+                    onError(data) {
+                        handleRetryComplete(data);
+                    },
+                });
+            } catch (err) {
+                UI.toast('Retry failed: ' + err.message, 'error');
+                retryBtn.disabled = false;
+                retryBtn.textContent = 'RETRY';
+            }
+        })();
+    });
+
     goBtn.addEventListener('click', startDownload);
     urlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') startDownload();
@@ -125,6 +234,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show stop button, hide resume button
         stopBtn.classList.remove('hidden');
         resumeBtn.classList.add('hidden');
+
+        isAlbum = url.includes('/album/');
 
         try {
             const outputDir = downloadDirInput.value.trim() || selectedDir;
@@ -215,6 +326,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
         stopBtn.classList.add('hidden');
         resumeBtn.classList.remove('hidden');
+        if (currentSource) {
+            currentSource.close();
+            currentSource = null;
+        }
+    }
+
+    function handleRetryComplete(data) {
+        UI.setProgress(100);
+        UI.setPercent('100%');
+        UI.setStatus('Retry complete!');
+        UI.setStatusDot('done');
+        UI.setProgressBarState('done');
+        UI.hideTrackInfo();
+
+        const failedCount = data.failed_tracks?.length || 0;
+        const downloadedCount = data.files?.length || 0;
+        UI.setDetail(`${downloadedCount} total files, ${failedCount} still failed`);
+
+        UI.showResults(data.files || [], data.failed_tracks || []);
+
+        if (failedCount > 0) {
+            UI.toast(`${failedCount} track(s) still failed`, 'error');
+        } else {
+            UI.toast('All retries succeeded!', 'success');
+        }
+
+        stopBtn.classList.add('hidden');
+        resumeBtn.classList.add('hidden');
+        if (retryAllBtn) {
+            retryAllBtn.disabled = false;
+            retryAllBtn.textContent = 'RETRY ALL FAILED';
+        }
         if (currentSource) {
             currentSource.close();
             currentSource = null;

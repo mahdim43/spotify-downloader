@@ -24,6 +24,17 @@ const API = {
         return data;
     },
 
+    async retryFailed(jobId, tracks, isAlbum) {
+        const resp = await fetch(`/api/retry/${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tracks, is_album: isAlbum || false }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Retry request failed');
+        return data;
+    },
+
     connectProgress(jobId, callbacks) {
         const source = new EventSource(`/api/progress/${jobId}`);
 
@@ -52,6 +63,14 @@ const API = {
             try {
                 const data = JSON.parse(e.data);
                 callbacks.onComplete?.(data);
+            } catch {}
+            source.close();
+        });
+
+        source.addEventListener('retry_complete', (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                callbacks.onRetryComplete?.(data) || callbacks.onComplete?.(data);
             } catch {}
             source.close();
         });

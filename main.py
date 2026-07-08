@@ -41,6 +41,11 @@ class DownloadRequest(BaseModel):
     embed_lyrics: bool = False
 
 
+class RetryRequest(BaseModel):
+    tracks: list[dict]
+    is_album: bool = False
+
+
 SPOTIFY_URL_RE = re.compile(
     r'https?://open\.spotify\.com/(track|playlist|album)/([a-zA-Z0-9]+)'
 )
@@ -128,6 +133,82 @@ async def resume_job(job_id: str):
     asyncio.create_task(task_manager.run_job(job))
     
     return {"status": "resumed", "job_id": job_id, "start_index": job.start_index}
+
+
+@app.post("/api/retry/{job_id}")
+async def retry_failed_tracks(job_id: str, req: RetryRequest):
+    """Retry specific failed tracks."""
+    job = task_manager.get_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={"error": "Job not found"})
+
+    if not req.tracks:
+        return JSONResponse(status_code=400, content={"error": "No tracks to retry"})
+
+    output_dir = Path(job.output_dir) if job.output_dir else task_manager.download_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    async def run_retry():
+        from downloader import retry_single_track
+        job.status = "processing"
+        job.broadcast("status", {"status": "retrying"})
+
+        retry_files = []
+        retry_failed = []
+
+        for track in req.tracks:
+            if job.stop_event.is_set():
+                break
+
+            track_name = track.get("title", "")
+            track_artist = track.get("artist", "")
+            track_num = track.get("track_num", 0)
+
+            result = await retry_single_track(
+                output_dir=output_dir,
+                bitrate=job.bitrate,
+                track_name=track_name,
+                track_artist=track_artist,
+                track_num=track_num,
+                is_album=req.is_album,
+                embed_lyrics=job.embed_lyrics,
+                on_progress=lambda cur, total, t: job.broadcast("progress", {
+                    "status": "retrying",
+                    "current": cur,
+                    "total": total,
+                    "track": t,
+                }),
+                on_file=lambda name: job.broadcast("file", {
+                    "status": "retrying",
+                    "track": name,
+                }),
+                on_error=lambda msg: job.broadcast("error", {"error": msg}),
+            )
+
+            retry_files.extend(result.get("files", []))
+            retry_failed.extend(result.get("failed", []))
+
+        # Update job state
+        for f in retry_files:
+            if f not in job.files:
+                job.files.append(f)
+        for ft in req.tracks:
+            job.failed_tracks = [f for f in job.failed_tracks if f.get("title") != ft.get("title") or f.get("artist") != ft.get("artist")]
+        for f in retry_failed:
+            if f not in job.failed_tracks:
+                job.failed_tracks.append(f)
+
+        job.status = "completed"
+        job.broadcast("retry_complete", {
+            "status": "completed",
+            "files": job.files,
+            "failed_tracks": job.failed_tracks,
+        })
+        logger.info(f"Job {job.id} retry completed: {len(retry_files)} downloaded, {len(retry_failed)} still failed")
+
+    asyncio.create_task(run_retry())
+
+    return {"status": "retrying", "job_id": job_id, "tracks": len(req.tracks)}
 
 
 @app.get("/api/progress/{job_id}")

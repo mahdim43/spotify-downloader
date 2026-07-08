@@ -816,6 +816,52 @@ body {
     max-width: 30%;
 }
 
+.retry-btn {
+    background: transparent;
+    border: 1px solid var(--error);
+    border-radius: 6px;
+    padding: 0.35rem 0.75rem;
+    color: var(--error);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.retry-btn:hover {
+    background: var(--error);
+    color: #000;
+    box-shadow: 0 0 15px rgba(255, 50, 50, 0.3);
+}
+
+.retry-all-container {
+    display: flex;
+    justify-content: center;
+    margin-top: 1rem;
+}
+
+.retry-all-btn {
+    background: transparent;
+    border: 1px solid var(--error);
+    border-radius: 8px;
+    padding: 0.6rem 1.5rem;
+    color: var(--error);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    letter-spacing: 0.05em;
+}
+
+.retry-all-btn:hover {
+    background: var(--error);
+    color: #000;
+    box-shadow: 0 0 20px rgba(255, 50, 50, 0.4);
+}
+
 /* ── TOASTS ── */
 .toast-container {
     position: fixed;

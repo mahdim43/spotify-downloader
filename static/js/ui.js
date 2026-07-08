@@ -173,13 +173,16 @@ const UI = {
 
         const item = document.createElement('div');
         item.className = 'file-item result-failed';
+        item.dataset.track = JSON.stringify(track);
         item.innerHTML = `
             <span class="result-icon fail">&#10007;</span>
             <span class="file-name">${UI.escapeHtml(displayName)}</span>
             <span class="fail-reason">${UI.escapeHtml(track.error || 'Failed')}</span>
+            <button class="retry-btn" title="Retry this track">RETRY</button>
         `;
         list.appendChild(item);
         document.getElementById('failedSection')?.classList.remove('hidden');
+        UI._updateRetryButton();
     },
 
     _updateSuccessCount(count) {
@@ -190,6 +193,30 @@ const UI = {
     _updateFailedCount(count) {
         const el = document.getElementById('failedCount');
         if (el) el.textContent = count;
+    },
+
+    _updateRetryButton() {
+        const failedList = document.getElementById('failedList');
+        const retryAllContainer = document.getElementById('retryAllContainer');
+        if (!failedList || !retryAllContainer) return;
+        const count = failedList.children.length;
+        if (count > 0) {
+            retryAllContainer.classList.remove('hidden');
+        } else {
+            retryAllContainer.classList.add('hidden');
+        }
+    },
+
+    getFailedTracks() {
+        const failedList = document.getElementById('failedList');
+        if (!failedList) return [];
+        const tracks = [];
+        for (const item of failedList.children) {
+            try {
+                tracks.push(JSON.parse(item.dataset.track));
+            } catch {}
+        }
+        return tracks;
     },
 
     toast(message, type = 'info') {
