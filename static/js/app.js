@@ -127,6 +127,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const trackName = data.track || 'Unknown Track';
             UI.setStatus(`Downloading ${current}/${total}`);
             UI.setTrackInfo(`${current}. ${trackName}`);
+
+            if (trackName.endsWith('.mp3')) {
+                UI.addSuccess(trackName);
+            }
         }
 
         if (data.status === 'transcoding') {
@@ -146,8 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const failedCount = data.failed_tracks?.length || 0;
         UI.setDetail(`${count} ok, ${failedCount} failed`);
 
-        if (count > 0 || failedCount > 0) {
-            UI.showSection('filesSection');
+        if (failedCount > 0) {
             UI.showResults(data.files || [], data.failed_tracks || []);
         }
 

@@ -109,39 +109,87 @@ const UI = {
     },
 
     showResults(successFiles, failedTracks) {
-        const list = document.getElementById('filesList');
-        if (!list) return;
-        list.innerHTML = '';
+        const successList = document.getElementById('successList');
+        const failedList = document.getElementById('failedList');
+        if (!successList || !failedList) return;
+        successList.innerHTML = '';
+        failedList.innerHTML = '';
 
         successFiles.forEach((file) => {
-            const name = file.split(/[/\\]/).pop();
-            const url = `/files/${encodeURIComponent(name)}`;
-            const displayName = name.replace(/\.mp3$/i, '');
-
-            const item = document.createElement('div');
-            item.className = 'file-item result-success';
-            item.innerHTML = `
-                <span class="result-icon">&#10003;</span>
-                <span class="file-name">${UI.escapeHtml(displayName)}</span>
-                <a href="${url}" download class="file-download-btn">GET</a>
-            `;
-            list.appendChild(item);
+            UI._addSuccessItem(file);
         });
+        UI._updateSuccessCount(successFiles.length);
 
         failedTracks.forEach((track) => {
-            const displayName = track.artist
-                ? `${track.artist} - ${track.title}`
-                : track.title;
-
-            const item = document.createElement('div');
-            item.className = 'file-item result-failed';
-            item.innerHTML = `
-                <span class="result-icon fail">&#10007;</span>
-                <span class="file-name">${UI.escapeHtml(displayName)}</span>
-                <span class="fail-reason">${UI.escapeHtml(track.error || 'Failed')}</span>
-            `;
-            list.appendChild(item);
+            UI._addFailedItem(track);
         });
+        UI._updateFailedCount(failedTracks.length);
+    },
+
+    addSuccess(file) {
+        UI._addSuccessItem(file);
+        const list = document.getElementById('successList');
+        if (list) {
+            const count = list.children.length;
+            UI._updateSuccessCount(count);
+            UI.showSection('filesSection');
+        }
+    },
+
+    addFailed(track) {
+        UI._addFailedItem(track);
+        const list = document.getElementById('failedList');
+        if (list) {
+            const count = list.children.length;
+            UI._updateFailedCount(count);
+            UI.showSection('filesSection');
+        }
+    },
+
+    _addSuccessItem(file) {
+        const list = document.getElementById('successList');
+        if (!list) return;
+        const name = file.replace(/^\(exists\)\s*/i, '');
+        const url = `/files/${encodeURIComponent(name)}`;
+        const displayName = name.replace(/\.mp3$/i, '');
+        const isSkipped = /^\(exists\)/i.test(file);
+
+        const item = document.createElement('div');
+        item.className = 'file-item result-success';
+        item.innerHTML = `
+            <span class="result-icon">${isSkipped ? '&#8635;' : '&#10003;'}</span>
+            <span class="file-name">${UI.escapeHtml(displayName)}</span>
+            ${isSkipped ? '<span class="skip-label">EXISTS</span>' : `<a href="${url}" download class="file-download-btn">GET</a>`}
+        `;
+        list.appendChild(item);
+    },
+
+    _addFailedItem(track) {
+        const list = document.getElementById('failedList');
+        if (!list) return;
+        const displayName = track.artist
+            ? `${track.artist} - ${track.title}`
+            : track.title;
+
+        const item = document.createElement('div');
+        item.className = 'file-item result-failed';
+        item.innerHTML = `
+            <span class="result-icon fail">&#10007;</span>
+            <span class="file-name">${UI.escapeHtml(displayName)}</span>
+            <span class="fail-reason">${UI.escapeHtml(track.error || 'Failed')}</span>
+        `;
+        list.appendChild(item);
+        document.getElementById('failedSection')?.classList.remove('hidden');
+    },
+
+    _updateSuccessCount(count) {
+        const el = document.getElementById('successCount');
+        if (el) el.textContent = count;
+    },
+
+    _updateFailedCount(count) {
+        const el = document.getElementById('failedCount');
+        if (el) el.textContent = count;
     },
 
     toast(message, type = 'info') {

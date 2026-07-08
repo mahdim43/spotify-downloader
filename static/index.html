@@ -109,7 +109,17 @@
                     <span class="title-icon">&#9835;</span>
                     DOWNLOAD RESULTS
                 </h2>
-                <div id="filesList" class="files-list"></div>
+                <div class="results-count" id="resultsCount"></div>
+                <div class="results-lists">
+                    <div id="successSection" class="result-group">
+                        <h3 class="result-heading success-heading">&#10003; SUCCESSFUL <span id="successCount" class="count-badge">0</span></h3>
+                        <div id="successList" class="files-list"></div>
+                    </div>
+                    <div id="failedSection" class="result-group hidden">
+                        <h3 class="result-heading failed-heading">&#10007; FAILED <span id="failedCount" class="count-badge fail">0</span></h3>
+                        <div id="failedList" class="files-list"></div>
+                    </div>
+                </div>
             </div>
 
             <div id="toastContainer" class="toast-container"></div>
