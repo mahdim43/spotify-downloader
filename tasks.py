@@ -121,7 +121,9 @@ class TaskManager:
             await asyncio.sleep(300)
             to_remove = []
             for job_id, job in self.jobs.items():
-                if job.status in ("completed", "failed"):
+                if job.status == "completed" and not job.failed_tracks:
+                    to_remove.append(job_id)
+                elif job.status == "failed":
                     to_remove.append(job_id)
             for job_id in to_remove:
                 del self.jobs[job_id]
