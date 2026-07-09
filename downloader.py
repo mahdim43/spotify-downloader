@@ -11,11 +11,23 @@ import requests
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, TRCK, TDRC, USLT, SYLT, ID3NoHeaderError
 from spotify_scraper import SpotifyClient
 
+import config
+
 logger = logging.getLogger(__name__)
 
 SPOTIFY_URL_PATTERN = re.compile(
     r'https?://open\.spotify\.com/(track|playlist|album)/([a-zA-Z0-9]+)'
 )
+
+
+def _get_youtube_cookies_args() -> list[str]:
+    """Build yt-dlp cookies arguments from config."""
+    cookies = config.YOUTUBE_COOKIES.strip()
+    if not cookies:
+        return []
+    if Path(cookies).is_file():
+        return ["--cookies", cookies]
+    return ["--cookies-from-browser", cookies]
 
 SPOTIFY_OEMBED_URL = "https://open.spotify.com/oembed"
 
@@ -581,7 +593,7 @@ async def _download_single(
         "--no-update",
         "--extractor-args", "youtube:player_client=android_vr",
         f"ytsearch:{search_query}",
-    ]
+    ] + _get_youtube_cookies_args()
 
     if on_progress:
         on_progress(0, 1, f"Downloading: {search_query}")
@@ -697,7 +709,7 @@ async def retry_single_track(
         "--no-update",
         "--extractor-args", "youtube:player_client=android_vr",
         f"ytsearch:{search_query}",
-    ]
+    ] + _get_youtube_cookies_args()
 
     try:
         before_download = {f.name for f in output_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
@@ -889,7 +901,7 @@ async def _download_playlist(
                 "--no-update",
                 "--extractor-args", "youtube:player_client=android_vr",
                 f"ytsearch:{search_query}",
-            ]
+            ] + _get_youtube_cookies_args()
 
             result = await asyncio.to_thread(
                 subprocess.run,
