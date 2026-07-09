@@ -6,3 +6,4 @@ mutagen>=1.47.0
 pydantic>=2.0.0
 aiofiles>=23.0.0
 spotifyscraper>=3.9.2
+requests>=2.31.0
