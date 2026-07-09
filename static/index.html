@@ -55,6 +55,15 @@
                     </div>
                 </div>
 
+                <div class="parallel-group">
+                    <label class="input-label">PARALLEL</label>
+                    <div class="parallel-wrapper">
+                        <button class="parallel-adj" id="parallelMinus">&minus;</button>
+                        <input type="number" id="parallelInput" class="parallel-input" min="1" max="10" value="1">
+                        <button class="parallel-adj" id="parallelPlus">+</button>
+                    </div>
+                </div>
+
                 <div class="download-dir-group">
                     <label class="input-label">OUTPUT_DIR</label>
                     <div class="dir-input-wrapper">
@@ -87,6 +96,13 @@
                     <span class="title-icon">&#128269;</span>
                     SEARCH RESULTS
                 </h2>
+                <div class="search-actions" id="searchActions">
+                    <label class="search-select-all">
+                        <input type="checkbox" id="selectAllCheckbox"> SELECT ALL
+                    </label>
+                    <button id="downloadSelectedBtn" class="search-mass-btn" disabled>DOWNLOAD SELECTED</button>
+                    <button id="downloadAllBtn" class="search-mass-btn">DOWNLOAD ALL</button>
+                </div>
                 <div id="searchResults" class="search-results"></div>
             </div>
 

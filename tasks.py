@@ -9,12 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class Job:
-    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False):
+    def __init__(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, parallel: int = 1):
         self.id = str(uuid.uuid4())
         self.url = url
         self.bitrate = bitrate
         self.output_dir = output_dir
         self.embed_lyrics = embed_lyrics
+        self.parallel = parallel
         self.status = "queued"
         self.total = 0
         self.completed = 0
@@ -41,6 +42,7 @@ class Job:
             "errors": self.errors,
             "current_track": self.current_track,
             "bitrate": self.bitrate,
+            "parallel": self.parallel,
         }
 
     def save_progress(self):
@@ -51,6 +53,7 @@ class Job:
                 "bitrate": self.bitrate,
                 "output_dir": self.output_dir,
                 "embed_lyrics": self.embed_lyrics,
+                "parallel": self.parallel,
                 "start_index": self.completed + len(self.skipped_files),
                 "files": self.files,
                 "skipped_files": self.skipped_files,
@@ -70,6 +73,7 @@ class Job:
                 self.files = data.get("files", [])
                 self.skipped_files = data.get("skipped_files", [])
                 self.failed_tracks = data.get("failed_tracks", [])
+                self.parallel = data.get("parallel", 1)
                 logger.info(f"Job {self.id}: Loaded progress from index {self.start_index}")
                 return True
         except Exception as e:
@@ -125,8 +129,8 @@ class TaskManager:
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
-    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False) -> Job:
-        job = Job(url, bitrate, output_dir, embed_lyrics)
+    def create_job(self, url: str, bitrate: str = "320", output_dir: str = "", embed_lyrics: bool = False, parallel: int = 1) -> Job:
+        job = Job(url, bitrate, output_dir, embed_lyrics, parallel)
         self.jobs[job.id] = job
         return job
 
@@ -157,6 +161,7 @@ class TaskManager:
                     embed_lyrics=job.embed_lyrics,
                     stop_event=job.stop_event,
                     start_index=job.start_index,
+                    parallel=job.parallel,
                     on_progress=lambda cur, total, track: self._on_progress(job, cur, total, track),
                     on_file=lambda name: self._on_file(job, name),
                     on_error=lambda msg: self._on_error(job, msg),

@@ -14,12 +14,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const retryAllBtn = document.getElementById('retryAllBtn');
     const searchSection = document.getElementById('searchSection');
     const searchResults = document.getElementById('searchResults');
+    const parallelInput = document.getElementById('parallelInput');
+    const parallelMinus = document.getElementById('parallelMinus');
+    const parallelPlus = document.getElementById('parallelPlus');
+    const selectAllCheckbox = document.getElementById('selectAllCheckbox');
+    const downloadSelectedBtn = document.getElementById('downloadSelectedBtn');
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
 
     let selectedBitrate = '320';
     let selectedDir = '';
     let embedLyrics = true;
+    let parallelCount = 1;
     let currentSource = null;
     let currentJobId = null;
+    let retryJobId = null;
     let isAlbum = false;
     let searchTimeout = null;
 
@@ -27,6 +35,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (lyricsLabel) {
         lyricsLabel.textContent = 'ON';
         lyricsLabel.style.color = 'var(--accent)';
+    }
+
+    // Parallel input controls
+    if (parallelInput) {
+        parallelInput.addEventListener('input', () => {
+            let v = parseInt(parallelInput.value) || 1;
+            v = Math.max(1, Math.min(10, v));
+            parallelCount = v;
+        });
+    }
+    if (parallelMinus) {
+        parallelMinus.addEventListener('click', () => {
+            let v = (parseInt(parallelInput.value) || 1) - 1;
+            v = Math.max(1, v);
+            parallelInput.value = v;
+            parallelCount = v;
+        });
+    }
+    if (parallelPlus) {
+        parallelPlus.addEventListener('click', () => {
+            let v = (parseInt(parallelInput.value) || 1) + 1;
+            v = Math.min(10, v);
+            parallelInput.value = v;
+            parallelCount = v;
+        });
     }
 
     bitrateBtns.forEach((btn) => {
@@ -98,7 +131,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Retry all failed tracks
     if (retryAllBtn) {
         retryAllBtn.addEventListener('click', async () => {
-            if (!currentJobId) return;
+            const jobId = retryJobId || currentJobId;
+            if (!jobId) return;
             const failedTracks = UI.getFailedTracks();
             if (failedTracks.length === 0) return;
 
@@ -114,7 +148,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 UI.setStatusDot('');
                 UI.setProgressBarState('');
 
-                const result = await API.retryFailed(currentJobId, failedTracks, isAlbum);
+                const result = await API.retryFailed(jobId, failedTracks, isAlbum);
+                retryJobId = result.job_id;
                 currentJobId = result.job_id;
 
                 currentSource = API.connectProgress(result.job_id, {
@@ -134,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         handleRetryComplete(data);
                     },
                     onError(data) {
-                        handleRetryComplete(data);
+                        UI.toast(data.error || 'Track retry failed', 'error');
                     },
                 });
             } catch (err) {
@@ -148,7 +183,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Individual retry button delegation
     document.addEventListener('click', (e) => {
         const retryBtn = e.target.closest('.retry-btn');
-        if (!retryBtn || !currentJobId) return;
+        if (!retryBtn) return;
+        const jobId = retryJobId || currentJobId;
+        if (!jobId) return;
 
         const item = retryBtn.closest('.result-failed');
         if (!item) return;
@@ -171,7 +208,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 UI.setStatusDot('');
                 UI.setProgressBarState('');
 
-                const result = await API.retryFailed(currentJobId, [track], isAlbum);
+                const result = await API.retryFailed(jobId, [track], isAlbum);
+                retryJobId = result.job_id;
                 currentJobId = result.job_id;
 
                 currentSource = API.connectProgress(result.job_id, {
@@ -191,7 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         handleRetryComplete(data);
                     },
                     onError(data) {
-                        handleRetryComplete(data);
+                        UI.toast(data.error || 'Track retry failed', 'error');
                     },
                 });
             } catch (err) {
@@ -209,6 +247,103 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = dlBtn.dataset.url;
         if (url) downloadFromSearch(url);
     });
+
+    // Select all checkbox
+    if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', () => {
+            const checked = selectAllCheckbox.checked;
+            searchResults.querySelectorAll('.search-checkbox').forEach(cb => {
+                cb.checked = checked;
+            });
+            updateMassDownloadBtns();
+        });
+    }
+
+    // Individual checkbox delegation
+    searchResults.addEventListener('change', (e) => {
+        if (e.target.classList.contains('search-checkbox')) {
+            updateMassDownloadBtns();
+            const total = searchResults.querySelectorAll('.search-checkbox').length;
+            const checked = searchResults.querySelectorAll('.search-checkbox:checked').length;
+            selectAllCheckbox.checked = total > 0 && checked === total;
+        }
+    });
+
+    // Download selected
+    if (downloadSelectedBtn) {
+        downloadSelectedBtn.addEventListener('click', () => {
+            const urls = getSelectedSearchUrls();
+            if (urls.length === 0) return;
+            startMassDownload(urls);
+        });
+    }
+
+    // Download all
+    if (downloadAllBtn) {
+        downloadAllBtn.addEventListener('click', () => {
+            const urls = getAllSearchUrls();
+            if (urls.length === 0) return;
+            startMassDownload(urls);
+        });
+    }
+
+    function updateMassDownloadBtns() {
+        const checkedCount = searchResults.querySelectorAll('.search-checkbox:checked').length;
+        if (downloadSelectedBtn) {
+            downloadSelectedBtn.disabled = checkedCount === 0;
+        }
+    }
+
+    function getSelectedSearchUrls() {
+        const urls = [];
+        searchResults.querySelectorAll('.search-checkbox:checked').forEach(cb => {
+            const item = cb.closest('.search-item');
+            if (item) {
+                const btn = item.querySelector('.search-download-btn');
+                if (btn && btn.dataset.url) urls.push(btn.dataset.url);
+            }
+        });
+        return urls;
+    }
+
+    function getAllSearchUrls() {
+        const urls = [];
+        searchResults.querySelectorAll('.search-download-btn').forEach(btn => {
+            if (btn.dataset.url) urls.push(btn.dataset.url);
+        });
+        return urls;
+    }
+
+    async function startMassDownload(urls) {
+        UI.hideSection('searchSection');
+        UI.showSection('progressSection');
+        UI.hideSection('filesSection');
+        UI.setProgress(0);
+        UI.setPercent('0%');
+        UI.setStatus(`Starting ${urls.length} downloads...`);
+        UI.setDetail('');
+        UI.setStatusDot('');
+        UI.setProgressBarState('');
+        UI.hideTrackInfo();
+        stopBtn.classList.add('hidden');
+        resumeBtn.classList.add('hidden');
+
+        const outputDir = downloadDirInput.value.trim() || selectedDir;
+        let completedJobs = 0;
+        const totalJobs = urls.length;
+
+        for (const url of urls) {
+            try {
+                const result = await API.download(url, selectedBitrate, outputDir, embedLyrics, parallelCount);
+                UI.setStatus(`Job ${completedJobs + 1}/${totalJobs} queued...`);
+            } catch (err) {
+                UI.toast(`Failed to queue: ${err.message}`, 'error');
+                completedJobs++;
+            }
+        }
+
+        UI.setStatus(`${totalJobs} jobs queued. Watching progress...`);
+    }
 
     goBtn.addEventListener('click', startDownload);
     urlInput.addEventListener('keydown', (e) => {
@@ -272,6 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const explicitTag = track.explicit ? '<span class="search-explicit">E</span>' : '';
 
             item.innerHTML = `
+                <input type="checkbox" class="search-checkbox">
                 ${coverHtml}
                 <div class="search-info">
                     <div class="search-title">${explicitTag}${UI.escapeHtml(track.title)}</div>
@@ -282,6 +418,10 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             searchResults.appendChild(item);
         });
+
+        // Reset select all
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        updateMassDownloadBtns();
     }
 
     async function downloadFromSearch(spotifyUrl) {
@@ -313,7 +453,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const outputDir = downloadDirInput.value.trim() || selectedDir;
-            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics);
+            const result = await API.download(url, selectedBitrate, outputDir, embedLyrics, parallelCount);
             currentJobId = result.job_id;
             UI.setStatus('Job queued, downloading...');
 
@@ -352,7 +492,11 @@ document.addEventListener('DOMContentLoaded', () => {
             UI.setPercent(`${pct}%`);
 
             const trackName = data.track || 'Unknown Track';
-            UI.setStatus(`Downloading ${current}/${total}`);
+            if (parallelCount > 1) {
+                UI.setStatus(`Downloading ${current}/${total} (${parallelCount} parallel)`);
+            } else {
+                UI.setStatus(`Downloading ${current}/${total}`);
+            }
             UI.setTrackInfo(`${current}. ${trackName}`);
         }
 
@@ -385,6 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.showResults(allFiles, data.failed_tracks || []);
 
         if (failedCount > 0) {
+            retryJobId = currentJobId;
             UI.toast(`${failedCount} track(s) failed to download`, 'error');
         }
 
@@ -416,9 +561,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const failedCount = data.failed_tracks?.length || 0;
         const downloadedCount = data.files?.length || 0;
-        UI.setDetail(`${downloadedCount} total files, ${failedCount} still failed`);
+        const skippedCount = data.skipped_files?.length || 0;
+        UI.setDetail(`${downloadedCount} downloaded, ${skippedCount} skipped, ${failedCount} failed`);
 
-        UI.showResults(data.files || [], data.failed_tracks || []);
+        const allFiles = (data.files || []).concat((data.skipped_files || []).map(f => '(exists) ' + f));
+        UI.showResults(allFiles, data.failed_tracks || []);
 
         if (failedCount > 0) {
             UI.toast(`${failedCount} track(s) still failed`, 'error');

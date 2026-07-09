@@ -1,9 +1,9 @@
 const API = {
-    async download(url, bitrate, outputDir, embedLyrics) {
+    async download(url, bitrate, outputDir, embedLyrics, parallel) {
         const resp = await fetch('/api/download', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url, bitrate, output_dir: outputDir || '', embed_lyrics: embedLyrics || false }),
+            body: JSON.stringify({ url, bitrate, output_dir: outputDir || '', embed_lyrics: embedLyrics || false, parallel: parallel || 1 }),
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || 'Download request failed');

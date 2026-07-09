@@ -17,6 +17,7 @@ if not DOWNLOAD_DIR.exists():
 FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
 
 MAX_CONCURRENT_DOWNLOADS = 5
+MAX_PARALLEL_TRACKS = 10
 JOB_CLEANUP_SECONDS = 1800
 
 def check_dependencies():

@@ -39,6 +39,7 @@ class DownloadRequest(BaseModel):
     bitrate: str = "320"
     output_dir: str = ""
     embed_lyrics: bool = False
+    parallel: int = 1
 
 
 class RetryRequest(BaseModel):
@@ -87,10 +88,12 @@ async def api_download(req: DownloadRequest):
     if req.bitrate not in ("192", "320"):
         return JSONResponse(status_code=400, content={"error": "Bitrate must be '192' or '320'"})
 
+    parallel = max(1, min(req.parallel, config.MAX_PARALLEL_TRACKS))
+
     output_dir = req.output_dir.strip() if req.output_dir else ""
 
-    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics)
-    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics}")
+    job = task_manager.create_job(req.url, req.bitrate, output_dir, req.embed_lyrics, parallel)
+    logger.info(f"Job created: {job.id} for {req.url} @ {req.bitrate}kbps parallel={parallel} -> {output_dir or config.DOWNLOAD_DIR} lyrics={req.embed_lyrics}")
 
     asyncio.create_task(task_manager.run_job(job))
 
@@ -206,6 +209,7 @@ async def retry_failed_tracks(job_id: str, req: RetryRequest):
         job.broadcast("retry_complete", {
             "status": "completed",
             "files": job.files,
+            "skipped_files": job.skipped_files,
             "failed_tracks": job.failed_tracks,
         })
         logger.info(f"Job {job.id} retry completed: {len(retry_files)} downloaded, {len(retry_failed)} still failed")

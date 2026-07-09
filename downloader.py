@@ -310,7 +310,8 @@ def embed_metadata(file_path: Path, meta: dict, cover_data: bytes | None, lyrics
         safe_name = file_path.name.encode('ascii', 'replace').decode('ascii')
         logger.info(f"Embedded metadata into: {safe_name} (ID3v2.3)")
     except Exception as e:
-        logger.warning(f"Failed to embed metadata: {e}")
+        safe_name = file_path.name.encode("ascii", "replace").decode("ascii") if file_path else "unknown"
+        logger.warning(f"Failed to embed metadata: {safe_name} - {str(e).encode(errors='replace').decode()}")
 
 
 def _safe_log(text: str) -> str:
@@ -435,8 +436,6 @@ def _build_search_query(title: str, artist: str) -> str:
         parts.append(clean_artist)
     if title:
         clean_title = re.sub(r'\s*-\s*Spotify.*', '', title).strip()
-        clean_title = re.sub(r'\s*\(feat\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
-        clean_title = re.sub(r'\s*\(ft\.?.*?\)', '', clean_title, flags=re.IGNORECASE).strip()
         clean_title = re.sub(r'[,!;:?]', '', clean_title).strip()
         clean_title = re.sub(r'[^\x00-\x7F]+', '', clean_title).strip()
         clean_title = re.sub(r'\(\s*\)', '', clean_title).strip()
@@ -498,6 +497,7 @@ async def download_spotify(
     embed_lyrics: bool = False,
     stop_event: asyncio.Event | None = None,
     start_index: int = 0,
+    parallel: int = 1,
     on_progress: Callable[[int, int, str], None] | None = None,
     on_file: Callable[[str], None] | None = None,
     on_error: Callable[[str], None] | None = None,
@@ -516,7 +516,7 @@ async def download_spotify(
         return await _download_playlist(
             url, output_dir, bitrate, metadata, page_info,
             embed_lyrics, stop_event, start_index, on_progress, on_file, on_error,
-            is_album=is_album
+            is_album=is_album, parallel=parallel
         )
     else:
         return await _download_single(
@@ -711,7 +711,7 @@ async def retry_single_track(
 
         if result.returncode != 0:
             error_msg = (result.stderr or b"").decode(errors="replace")[:300]
-            logger.warning(f"Retry failed for track {track_num}: {track_name} | {error_msg}")
+            logger.warning(f"Retry failed for track {track_num}: {_safe_log(track_name)} | {error_msg}")
             if on_error:
                 on_error(f"Retry failed: {track_name}")
             return {"files": [], "failed": [{"title": track_name, "artist": track_artist, "error": "yt-dlp failed", "track_num": track_num}]}
@@ -720,7 +720,7 @@ async def retry_single_track(
         new_files = after_download - before_download
         new_mp3s = [output_dir / f for f in new_files]
         if not new_mp3s:
-            logger.warning(f"Retry returned 0 but no file created for: {track_name}")
+            logger.warning(f"Retry returned 0 but no file created for: {_safe_log(track_name)}")
             if on_error:
                 on_error(f"No results: {track_name}")
             return {"files": [], "failed": [{"title": track_name, "artist": track_artist, "error": "no results found", "track_num": track_num}]}
@@ -766,7 +766,7 @@ async def retry_single_track(
         return {"files": downloaded_files, "failed": []}
 
     except Exception as e:
-        logger.error(f"Error retrying track {track_num}: {e}")
+        logger.error(f"Error retrying track {track_num}: {str(e).encode(errors='replace').decode()}")
         if on_error:
             on_error(f"Error: {track_name} - {e}")
         return {"files": [], "failed": [{"title": track_name, "artist": track_artist, "error": str(e), "track_num": track_num}]}
@@ -785,6 +785,7 @@ async def _download_playlist(
     on_file: Callable,
     on_error: Callable,
     is_album: bool = False,
+    parallel: int = 1,
 ) -> dict:
     """Download a Spotify playlist/album by searching each track on YouTube."""
     album_title = ""
@@ -801,9 +802,8 @@ async def _download_playlist(
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Download folder: {playlist_dir}")
-    logger.info(f"Output dir: {output_dir}, album_title: {album_title!r}")
+    logger.info(f"Output dir: {output_dir}, album_title: {album_title!r}, parallel: {parallel}")
 
-    # Count existing mp3 files for reference
     existing_count = sum(1 for _ in output_dir.rglob("*.mp3"))
     logger.info(f"Existing mp3 files in output_dir (recursive): {existing_count}")
 
@@ -819,20 +819,20 @@ async def _download_playlist(
     if total == 0:
         if on_error:
             on_error("No tracks found in playlist")
-        return []
+        return {"files": [], "skipped": [], "failed": []}
 
+    import threading
+    import tempfile
+    import shutil
+    lock = threading.Lock()
     downloaded_files = []
     skipped_files = []
     failed_tracks = []
+    completed_count = [0]
 
-    for i, track_info in enumerate(html_tracks, 1):
-        # Check if stopped
+    async def download_one(i: int, track_info):
         if stop_event and stop_event.is_set():
-            break
-
-        # Skip tracks before start_index when resuming
-        if i <= start_index:
-            continue
+            return
 
         if isinstance(track_info, dict):
             track_name = track_info.get("title", "")
@@ -858,38 +858,38 @@ async def _download_playlist(
                         break
         if existing:
             logger.info(f"Skipping (already exists): {_safe_log(track_name)} - {_safe_log(track_artist)}")
-            skipped_files.append(existing.name)
+            with lock:
+                skipped_files.append(existing.name)
             if on_file:
                 on_file("(exists) " + existing.name)
             if on_progress:
                 on_progress(i, total, f"Skipped (exists): {track_artist} - {track_name}" if track_artist else f"Skipped (exists): {track_name}")
-            continue
-        else:
-            logger.info(f"Not found, will download: {_safe_log(track_name)} - {_safe_log(track_artist)}")
+            return
+
+        logger.info(f"Not found, will download: {_safe_log(track_name)} - {_safe_log(track_artist)}")
 
         search_query = _build_search_query(track_name, track_artist)
         logger.info(f"Searching YouTube for: ytsearch:{_safe_log(search_query)}")
 
-        output_template = str(playlist_dir / "%(title)s.%(ext)s")
-
-        args = [
-            "yt-dlp",
-            "--no-playlist",
-            "-f", "bestaudio/best",
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", f"{bitrate}k",
-            "-o", output_template,
-            "--no-warnings",
-            "--no-check-certificates",
-            "--match-filter", "duration<600",
-            "--no-update",
-            "--extractor-args", "youtube:player_client=android_vr",
-            f"ytsearch:{search_query}",
-        ]
-
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f"spotdown_{i}_"))
         try:
-            before_download = {f.name for f in playlist_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
+            output_template = str(tmp_dir / "%(title)s.%(ext)s")
+
+            args = [
+                "yt-dlp",
+                "--no-playlist",
+                "-f", "bestaudio/best",
+                "--extract-audio",
+                "--audio-format", "mp3",
+                "--audio-quality", f"{bitrate}k",
+                "-o", output_template,
+                "--no-warnings",
+                "--no-check-certificates",
+                "--match-filter", "duration<600",
+                "--no-update",
+                "--extractor-args", "youtube:player_client=android_vr",
+                f"ytsearch:{search_query}",
+            ]
 
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -898,72 +898,127 @@ async def _download_playlist(
                 timeout=300,
             )
 
-            if result.returncode == 0:
-                after_download = {f.name for f in playlist_dir.iterdir() if f.suffix == ".mp3" and f.is_file()}
-                new_files = after_download - before_download
-                new_mp3s = [playlist_dir / f for f in new_files if f not in downloaded_files]
-                if not new_mp3s:
-                    stderr_text = (result.stderr or b"").decode(errors="replace")
-                    if "0 results" in stderr_text:
-                        logger.warning(f"No YouTube results for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
-                    else:
-                        logger.warning(f"yt-dlp returned 0 but no file created for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
-                    failed_tracks.append({"title": track_name, "artist": track_artist, "error": "no results found", "track_num": i})
-                    if on_error:
-                        on_error(f"No results: {track_name}")
-                    continue
-
-                track_cover_data = None
-                if track_cover:
-                    track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
-                else:
-                    logger.warning(f"No cover URL for track {i}: {track_name}")
-
-                for f in new_mp3s:
-                    safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
-                    safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(f.stem)
-                    if is_album:
-                        new_name = f"{i:02d}.{safe_title} - {safe_artist}.mp3"
-                    else:
-                        new_name = f"{safe_title} - {safe_artist}.mp3"
-                    if new_name != f.name:
-                        new_path = f.parent / new_name
-                        if not new_path.exists():
-                            f.rename(new_path)
-                            f = new_path
-                        else:
-                            f.unlink()
-                            f = new_path
-
-                    downloaded_files.append(f.name)
-
-                    track_meta = {
-                        "title": track_name,
-                        "artist": track_artist or "Unknown Artist",
-                        "album": album_title,
-                        "track_num": str(i),
-                    }
-
-                    lyrics = None
-                    if embed_lyrics and track_artist and track_name:
-                        lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
-
-                    await asyncio.to_thread(embed_metadata, f, track_meta, track_cover_data, lyrics)
-
-                    if on_file:
-                        on_file(f.name)
-                    break
-            else:
+            if result.returncode != 0:
                 stderr_text = (result.stderr or b"").decode(errors="replace")
-                logger.warning(f"Failed track {i}/{total}: {track_name} | stderr: {stderr_text[:300]}")
-                failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed", "track_num": i})
+                logger.warning(f"Failed track {i}/{total}: {_safe_log(track_name)} | stderr: {stderr_text[:300]}")
+                with lock:
+                    failed_tracks.append({"title": track_name, "artist": track_artist, "error": "yt-dlp failed", "track_num": i})
                 if on_error:
                     on_error(f"Failed: {track_name}")
+                return
+
+            mp3_files = [f for f in tmp_dir.iterdir() if f.suffix == ".mp3" and f.is_file()]
+            if not mp3_files:
+                stderr_text = (result.stderr or b"").decode(errors="replace")
+                if "0 results" in stderr_text:
+                    logger.warning(f"No YouTube results for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
+                else:
+                    logger.warning(f"yt-dlp returned 0 but no file created for: {_safe_log(track_name)} - {_safe_log(track_artist)}")
+                with lock:
+                    failed_tracks.append({"title": track_name, "artist": track_artist, "error": "no results found", "track_num": i})
+                if on_error:
+                    on_error(f"No results: {track_name}")
+                return
+
+            src_file = mp3_files[0]
+
+            safe_artist = _sanitize_filename(track_artist) if track_artist else "Unknown Artist"
+            safe_title = _sanitize_filename(track_name) if track_name else _clean_yt_filename(src_file.stem)
+            if is_album:
+                final_name = f"{i:02d}.{safe_title} - {safe_artist}.mp3"
+            else:
+                final_name = f"{safe_title} - {safe_artist}.mp3"
+            final_path = playlist_dir / final_name
+
+            track_cover_data = None
+            if track_cover:
+                track_cover_data = await asyncio.to_thread(download_cover_image, track_cover)
+
+            lyrics = None
+            if embed_lyrics and track_artist and track_name:
+                lyrics = await asyncio.to_thread(fetch_lyrics, track_artist, track_name)
+
+            track_meta = {
+                "title": track_name,
+                "artist": track_artist or "Unknown Artist",
+                "album": album_title,
+                "track_num": str(i),
+            }
+
+            await asyncio.to_thread(embed_metadata, src_file, track_meta, track_cover_data, lyrics)
+
+            with lock:
+                if final_path.exists():
+                    final_path.unlink()
+                shutil.move(str(src_file), str(final_path))
+                downloaded_files.append(final_name)
+
+            if on_file:
+                on_file(final_name)
+
         except Exception as e:
-            logger.error(f"Error downloading track {i}: {e}")
-            failed_tracks.append({"title": track_name, "artist": track_artist, "error": str(e), "track_num": i})
+            safe_err = str(e).encode(errors="replace").decode()
+            logger.error(f"Error downloading track {i}: {safe_err}")
+            with lock:
+                failed_tracks.append({"title": track_name, "artist": track_artist, "error": safe_err, "track_num": i})
             if on_error:
-                on_error(f"Error: {track_name} - {e}")
+                on_error(f"Error: {track_name}")
+        finally:
+            try:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+    if parallel <= 1:
+        for i, track_info in enumerate(html_tracks, 1):
+            if stop_event and stop_event.is_set():
+                break
+            if i <= start_index:
+                continue
+            await download_one(i, track_info)
+            with lock:
+                completed_count[0] += 1
+                if on_progress:
+                    on_progress(completed_count[0], total, f"{completed_count[0]}/{total} completed")
+    else:
+        queue = asyncio.Queue()
+        for i, track_info in enumerate(html_tracks, 1):
+            if i <= start_index:
+                continue
+            queue.put_nowait((i, track_info))
+
+        async def worker():
+            while True:
+                if stop_event and stop_event.is_set():
+                    break
+                try:
+                    i, track_info = await asyncio.wait_for(queue.get(), timeout=5)
+                except (asyncio.TimeoutError, asyncio.QueueEmpty):
+                    break
+                try:
+                    await asyncio.wait_for(download_one(i, track_info), timeout=600)
+                except asyncio.TimeoutError:
+                    logger.error(f"Track {i} timed out after 600s, skipping")
+                    with lock:
+                        failed_tracks.append({"title": track_info.get("title", "") if isinstance(track_info, dict) else str(track_info), "artist": track_info.get("artist", "") if isinstance(track_info, dict) else "", "error": "download timed out", "track_num": i})
+                    if on_error:
+                        on_error(f"Timeout: track {i}")
+                except Exception as e:
+                    logger.error(f"Worker error on track {i}: {str(e).encode(errors='replace').decode()}")
+                    with lock:
+                        failed_tracks.append({"title": track_info.get("title", "") if isinstance(track_info, dict) else str(track_info), "artist": track_info.get("artist", "") if isinstance(track_info, dict) else "", "error": str(e), "track_num": i})
+                    if on_error:
+                        on_error(f"Error: track {i} - {e}")
+                finally:
+                    with lock:
+                        completed_count[0] += 1
+                        if on_progress:
+                            on_progress(completed_count[0], total, f"{completed_count[0]}/{total} completed")
+                    queue.task_done()
+
+        num_workers = min(parallel, queue.qsize())
+        workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+        await asyncio.gather(*workers, return_exceptions=True)
 
     if on_progress:
         on_progress(total, total, "Done")
