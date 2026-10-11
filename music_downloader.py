@@ -192,6 +192,10 @@ class MusicDownloader:
         self.config = config or DownloadConfig()
         self._check_ffmpeg()
         os.makedirs(self.config.output_dir, exist_ok=True)
+        # yt-dlp 2026.x fires each postprocessor "started" hook twice (with the
+        # same info_dict). We track what we've already printed so each step is
+        # shown only once. See _postprocessor_hook.
+        self._seen_pp_events: set[tuple] = set()
 
     # ------------------------------------------------------------------ #
     @staticmethod
@@ -267,21 +271,32 @@ class MusicDownloader:
             )
 
     # ------------------------------------------------------------------ #
-    def _build_output_template(self) -> str:
+    def _build_output_template(self, group_by_artist: bool = True) -> str:
         """Return a yt-dlp ``-o`` output template.
 
-        Files are stored as ``<output_dir>/<uploader>/<title> [<id>].<ext>``
-        so songs are neatly grouped by artist/channel.
+        * ``group_by_artist=True``  -> ``<output_dir>/<artist>/<title> [<id>].<ext>``
+          (used for albums/playlists so songs are grouped neatly).
+        * ``group_by_artist=False`` -> ``<output_dir>/<title> [<id>].<ext>``
+          (used for a single song, which drops straight into the output dir).
         """
+        if group_by_artist:
+            return os.path.join(
+                self.config.output_dir, "%(uploader)s", "%(title)s [%(id)s].%(ext)s"
+            )
         return os.path.join(
-            self.config.output_dir, "%(uploader)s", "%(title)s [%(id)s].%(ext)s"
+            self.config.output_dir, "%(title)s [%(id)s].%(ext)s"
         )
 
     # ------------------------------------------------------------------ #
-    def _build_options(self) -> dict:
-        """Assemble the options dict passed to ``YoutubeDL``."""
+    def _build_options(self, group_by_artist: bool = True) -> dict:
+        """Assemble the options dict passed to ``YoutubeDL``.
+
+        ``group_by_artist`` controls the output path: ``True`` nests files under
+        an ``<artist>/`` folder (used for albums/playlists), ``False`` writes
+        them straight into the output dir (used for a single song).
+        """
         opts: dict = {
-            "outtmpl": self._build_output_template(),
+            "outtmpl": self._build_output_template(group_by_artist=group_by_artist),
             "quiet": self.config.quiet,
             "no_warnings": self.config.quiet,
             "noprogress": self.config.quiet,
@@ -380,12 +395,24 @@ class MusicDownloader:
         elif status == "finished":
             sys.stdout.write("\n")
 
-    @staticmethod
-    def _postprocessor_hook(d: dict) -> None:
-        if d.get("status") == "started":
-            name = d.get("postprocessor", "processing")
-            sys.stdout.write(f"{C.wrap(C.DIM, '  -> ' + name)}...\n")
-            sys.stdout.flush()
+    def _postprocessor_hook(self, d: dict) -> None:
+        """Print a one-line note when a post-processing step starts.
+
+        yt-dlp 2026.x dispatches each "started" event twice with the *same*
+        ``info_dict`` object, which made every step look like it ran twice (even
+        though only one file is produced). We key on ``id(info_dict)`` plus the
+        postprocessor name and status so each real step prints exactly once.
+        """
+        if d.get("status") != "started":
+            return
+        name = d.get("postprocessor", "processing")
+        info_dict = d.get("info_dict")
+        key = (id(info_dict), name, d.get("status"))
+        if key in self._seen_pp_events:
+            return
+        self._seen_pp_events.add(key)
+        sys.stdout.write(f"{C.wrap(C.DIM, '  -> ' + name)}...\n")
+        sys.stdout.flush()
 
     # ------------------------------------------------------------------ #
     def download(self, target: str) -> int:
@@ -410,7 +437,9 @@ class MusicDownloader:
         label = target if is_url else f"search: {target}"
         info(f"Fetching {C.wrap(C.BOLD, label)}")
 
-        opts = self._build_options()
+        # A single URL/search term is one song -> keep it flat in the output
+        # dir (no artist subfolder).
+        opts = self._build_options(group_by_artist=False)
         saved = 0
         try:
             with YoutubeDL(opts) as ydl:
@@ -452,6 +481,10 @@ class MusicDownloader:
             f"{'track' if len(tracks) == 1 else 'tracks'} in this {kind}."
         )
 
+        # Only albums/playlists get an artist subfolder; a lone track drops
+        # straight into the output directory.
+        group_by_artist = len(tracks) > 1
+
         total = 0
         for i, track in enumerate(tracks, 1):
             prefix = (
@@ -468,6 +501,7 @@ class MusicDownloader:
                     "album": track.album,
                 },
                 expected_duration=getattr(track, "duration", None),
+                group_by_artist=group_by_artist,
             )
             total += saved
 
@@ -482,7 +516,8 @@ class MusicDownloader:
 
 
     def _download_search_query(self, query: str, override_meta: dict | None = None,
-                               expected_duration: int | None = None) -> int:
+                               expected_duration: int | None = None,
+                               group_by_artist: bool = True) -> int:
         """Search providers for *query* and download the best audio match.
 
         Tries each provider in turn (SoundCloud, then YouTube by default, or a
@@ -495,9 +530,16 @@ class MusicDownloader:
         ``override_meta`` lets the caller force the title/artist/album tags
         (used for Spotify/Deezer, where the true metadata differs from the
         provider's).
+
+        ``group_by_artist`` decides the save path: ``True`` nests the file under
+        an ``<artist>/`` folder (albums/playlists); ``False`` writes a single
+        song straight into the output dir.
         """
         prefixes = self._provider_prefixes()
-        opts = self._build_options()
+        opts = self._build_options(group_by_artist=group_by_artist)
+        # Reset the per-song de-dup set so playlist tracks never collide via a
+        # recycled id() of a previous track's info_dict.
+        self._seen_pp_events.clear()
         # When we know the true metadata (Spotify/Deezer), name the file after
         # it instead of the provider's (often messy) title/uploader, and retag
         # the finished file so the tags match too (providers like SoundCloud
@@ -505,11 +547,14 @@ class MusicDownloader:
         if override_meta and override_meta.get("title"):
             clean_title = override_meta["title"]
             clean_artist = override_meta.get("artist") or "%(uploader)s"
-            opts["outtmpl"] = os.path.join(
-                self.config.output_dir,
-                clean_artist,
-                f"{clean_title} [%(id)s].%(ext)s",
-            )
+            filename = f"{clean_title} [%(id)s].%(ext)s"
+            if group_by_artist:
+                opts["outtmpl"] = os.path.join(
+                    self.config.output_dir, clean_artist, filename
+                )
+            else:
+                # Single song -> flat, no artist folder.
+                opts["outtmpl"] = os.path.join(self.config.output_dir, filename)
 
         for prefix in prefixes:
             # prefix looks like "scsearch1:"; rebuild it to fetch several results
