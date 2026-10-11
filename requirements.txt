@@ -1,0 +1,12 @@
+# Python dependencies for music_downloader.py
+
+# yt-dlp is the engine that finds and downloads the media.
+yt-dlp>=2024.1.1
+
+# requests is used by spotify.py and deezer.py to read track/album/playlist
+# metadata from those services' public APIs.
+requests>=2.28.0
+
+# mutagen is used to retag downloaded files so the correct (Spotify/Deezer)
+# title/artist/album win over whatever the provider wrote.
+mutagen>=1.46.0

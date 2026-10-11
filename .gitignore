@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# Downloaded media
+downloads/
+*.mp3
+*.m4a
+*.opus
+*.flac
+*.wav
+*.ogg
+
+# yt-dlp / ffmpeg temp files
+*.part
+*.ytdl
+*.temp
